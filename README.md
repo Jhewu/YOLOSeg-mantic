@@ -1,18 +1,16 @@
-# YOLO-Seg++: Lighter, Higher-Quality YOLO-Based Brain Tumor Segmentation for Low-Resource Environment (BraTS-SSA)
+# YOLOSeg-mantic: Leveraging Detection-Derived Semantics for Lightweight Brain Tumor Segmentation on Edge Devices (BraTS-SSA)
+[**REPOSITORY WORK IN PROGRESS**]
+Current state-of-the-art brain tumor segmentation often depends on computationally expensive 3D tensors and transformer-based self-attention mechanisms. Although these approaches yield strong performance, they remain impractical for deployment in low-resource or edge environments. Conversely, existing low-parameter 2D segmentation architectures reduce computational cost but sacrifice segmentation fidelity (e.g., YOLO-based variants) or suffer from image-level class imbalance (i.e., a majority of 2D slices lacking tumor regions), where optimizing for both detection and segmentation tasks is challenging with limited parameters (e.g., TinyUNet). 
+To address this challenge, we developed YOLOSeg-mantic, a low-parameter (2.6M + 80K) 2D semantic segmentation framework that leverages detection-derived confidence signals from a pretrained YOLOv12n backbone. By using YOLO’s class logit as a semantic bottleneck and forming a compact UNet-style decoder using backbone skip features, our method explicitly transfers YOLO’s objectness prior into the segmentation task, improving robustness to image-level class imbalance while maintaining fine-grained boundary precision. YOLOSeg-mantic further serves as a transfer-level framework to adapt lightweight YOLO detectors into accurate semantic segmentation with minimal additional parameters, achieving 16 FPS in theoretical CPU inference. 
+On our validation set (BraTS-SSA), YOLOSeg-mantic achieves a Dice Similarity Coefficient of 0.87 for whole-tumor segmentation, surpassing Vanilla UNet (7M), TinyUNet (0.48M), YOLO12n-Seg (2.9M), and YOLO12x-Seg (64M), while maintaining a reasonable balance in Precision and Recall, indicating reduced sensitivity to slice-level class imbalance. The proposed decoupled architecture also enables task-specific optimization beyond YOLO’s coupled training objective, demonstrating that efficient and accurate brain-tumor segmentation is feasible through detection-informed design, paving the way for future peer-reviewed validation towards a clinical edge deployment solution. 
 
-**WORK IN PROGFESS** Current state-of-the-art brain tumor segmentation and semantic segmentation models rely on expensive 3D tensor and self-attention (Transformer) calculations. While a better-performing model can always be found with access to computing, these models cannot be deployed in low-resource settings or edge devices. Current low-parameter segmentation models, such as YOLOv12n-seg, perform great on day-to-day low-risk tasks; however, their segmentation quality suffers greatly and cannot be relied on for high-risk scenarios such as brain tumor segmentation, opening areas for exploration. To address the challenge of efficient and accurate medical image segmentation, we propose YOLO-Seg++, a lightweight, parameter-efficient (2.6M + 80K) segmentation model that outperforms YOLOv12Seg (2.9M) and vanilla UNet (7M) with Dice Scores of 0.81, 0.84, and 0.87 for whole tumors, respectively, on the BraTS-SSA dataset. YOLO-Seg++ leverages the logits from a YOLO detection model, which our analysis shows to encode strong spatial localization cues of tumor regions, as a semantic bottleneck. These logits are integrated with YOLO’s backbone “skip” features to form a compact UNet-like architecture. By combining YOLO’s strength in detection and localization with UNet’s pixel-level precision, our approach enables the conversion of a strong YOLO detector (transfer learning) into an equally strong segmentation model with minimal additional parameters and near-native CPU inference performance. Decoupling the YOLO detector and segmentation head further enhances this adaptability, allowing task-specific loss optimization beyond YOLO’s coupled training objective. Efficient and accurate brain tumor segmentation can be achieved with the YOLO-Seg++ architecture, using pre-existing and well-established research on model architectural design. Further research in data augmentation, customized loss functions, advanced hyperparameter search, and ultimately architectural refinement can improve and suggest potential for future clinical adaptation pending further validation.
-
-## 📁 Structure
+## 📁 Structure [WORK IN PROGRESS]
 ```
 ├── custom_yolo_predictor/ 	# Ultralytics YOLO Custom Predictor (for 4-channel images)
-├── custom_yolo_trainer/	# Ulatralytics YOLO Custom Trainer (for 4-channel images)
-├── data/  					# YOLOU dataset
-├── modules/    			# YOLOU modules
-├── yolo_checkpoint/ 		# Pre-trained YOLOv12-Seg model
-├── dataset.py 				# Creates dataset for YOLOU
-├── loss.py 				# YOLOU loss
-├── predictor.py			# YOLOU predictor
-├── trainer.py				# YOLOU trainer
+├── custom_yolo_trainer/	  # Ulatralytics YOLO Custom Trainer (for 4-channel images)
+├── data/  					        # YOLOU dataset
+├── yolo_checkpoint/ 		    # Pre-trained YOLOv12-Seg model
+├── YOLOSegmantic.py 	      # Creates dataset for YOLOU
+├── dataset.py 				      # Creates dataset for YOLOU
+├── train.py				        # YOLOU trainer
 ```
-
-## REPOSITORY IS WORK IN PROGRESS

@@ -44,7 +44,7 @@ def argmax_conf(detect_branch):
 
 if __name__ == "__main__": 
     # Create trainer and predictor instances
-    p_args = dict(model="new_yolo_checkpoint/weights/best.pt",
+    p_args = dict(model="yolo12n-detect/weights/best.pt",
                 data=f"data/data.yaml", 
                 verbose=True,
                 imgsz=160, 
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
     YOLO_predictor.setup_model(p_args["model"])
 
-    x = cv2.imread("archive/BraTS-SSA-00041-00043-t1c_image.png", cv2.IMREAD_UNCHANGED)
+    x = cv2.imread("archive/BraTS-SSA-00041-0007-t1c_image.png", cv2.IMREAD_UNCHANGED)
     
     x = transforms.ToTensor()(x)
     x = transforms.Resize(size=(160, 160))(x)

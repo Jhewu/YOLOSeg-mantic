@@ -9,53 +9,56 @@ import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
 import torch.nn.functional as F
 
+
 class SingleLightConv(Module):
     def __init__(self, in_channels, out_channels, k1=3):
         super().__init__()
         self.conv = LightConv(
-                c1=in_channels, 
-                c2=out_channels, 
-                k=k1, 
-                act=True)
-                
+            c1=in_channels,
+            c2=out_channels,
+            k=k1,
+            act=True)
+
         # 1x1 conv to match channels if needed
         self.residual_conv = (
             Conv2d(in_channels, out_channels, kernel_size=1)
             if in_channels != out_channels else nn.Identity()
-        )    
+        )
 
     def forward(self, x):
         residual = self.residual_conv(x)
         out = self.conv(x)
-        out+=residual
+        out += residual
         return out
+
 
 class DoubleLightConv(Module):
     def __init__(self, in_channels, out_channels, k1=3, k2=3):
         super().__init__()
         self.conv = Sequential(
             LightConv(
-                c1=in_channels, 
-                c2=out_channels, 
-                k=k1, 
-                act=True), 
+                c1=in_channels,
+                c2=out_channels,
+                k=k1,
+                act=True),
             LightConv(
-                c1=out_channels, 
-                c2=out_channels, 
-                k=k2, 
+                c1=out_channels,
+                c2=out_channels,
+                k=k2,
                 act=True))
-                
+
         # 1x1 conv to match channels if needed
         self.residual_conv = (
             Conv2d(in_channels, out_channels, kernel_size=1)
             if in_channels != out_channels else Identity()
-        )    
+        )
 
     def forward(self, x):
         residual = self.residual_conv(x)
         out = self.conv(x)
-        out+=residual
+        out += residual
         return out
+
 
 class ECA(Module):
     def __init__(self, k_size: int = 3):
@@ -67,7 +70,8 @@ class ECA(Module):
             k_size (int): kernel size for Conv1d
         """
         self.avg_pool = AdaptiveAvgPool2d(1)
-        self.conv = Conv1d(1, 1, kernel_size=k_size, padding=(k_size - 1) // 2, bias=False) 
+        self.conv = Conv1d(1, 1, kernel_size=k_size,
+                           padding=(k_size - 1) // 2, bias=False)
 
     def forward(self, x: torch.tensor) -> torch.tensor:
         """
@@ -80,24 +84,26 @@ class ECA(Module):
         y = self.avg_pool(x)
 
         # Two different branches of ECA module
-        y = self.conv(y.squeeze(-1).transpose(-1, -2)).transpose(-1, -2).unsqueeze(-1)
+        y = self.conv(y.squeeze(-1).transpose(-1, -2)
+                      ).transpose(-1, -2).unsqueeze(-1)
 
         # Multi-scale information fusion
         y = torch.sigmoid(y)
 
         return x * y.expand_as(x)
 
-class YOLOSegPlusPlus(Module): 
+
+class YOLOSegPlusPlus(Module):
     def __init__(self,
                  predictor: CustomDetectionPredictor,
                  verbose: bool = False,
-                 target_modules_indices: List[int] = [2, 4, 6]): 
+                 target_modules_indices: List[int] = [2, 4, 6]):
         """
         WARNING: DOCUMENTATION NOT UPDATED
-        
+
         Creates a YOLOU-Seg++ Network with Pretrained YOLOv12 (detection) model
         Main Idea: Using YOLOv12 bbox as guidance in UNet skip connections and recycling YOLOv12 backbone as the encoder
-        
+
         Args: 
             predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor allowing 4-channels
             target_modules_indices (list [int]): list of indices to add skip connections (in YOLOv12-Seg every downsample)
@@ -134,70 +140,71 @@ class YOLOSegPlusPlus(Module):
           7                  -1  1    295424  ultralytics.nn.modules.conv.Conv             [128, 256, 3, 2]
           8                  -1  2    689408  ultralytics.nn.modules.block.A2C2f           [256, 256, 2, True, 1]
         -------------------------------------------------------------------------------------------------------------
-    
+
         """
-        ### TODO
-        ## (1) Make the individual modules declaration adaptive
-        ## (2) Use iter() instead of indices, which might be prone to breaking
-        ## (3) Update Documentation
-        ## (4) Implement Inference Step
-        ## (5) Clean up Methods
+        # TODO
+        # (1) Make the individual modules declaration adaptive
+        # (2) Use iter() instead of indices, which might be prone to breaking
+        # (3) Update Documentation
+        # (4) Implement Inference Step
+        # (5) Clean up Methods
 
         super().__init__()
-        ### YOLO predictor and backbone
-        # self.yolo_predictor = predictor.model.model         # <- For inference
-
-        self.encoder = nn.ModuleList(module for module in predictor.model.model.model[0:5]) 
-        for param in self.encoder.parameters(): # <- Frozen
+        # YOLO predictor and backbone
+        self.encoder = nn.ModuleList(
+            module for module in predictor.model.model.model[0:5])
+        for param in self.encoder.parameters():  # <- Frozen
             param.requires_grad = False
-        self.encoder.eval() 
-
-        self.upsample = Upsample(scale_factor = 2, mode = "bilinear", align_corners = False)
+        self.encoder.eval()
+        self.upsample = Upsample(
+            scale_factor=2, mode="bilinear", align_corners=False)
         self.decoder = nn.ModuleList([
-            Sequential( # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128+1, 96, n=1), 
+            Sequential(  # <- Mixing (128 Skip) + (1 Logits)
+                C3Ghost(128, 96, n=1),
                 ECA(),
             ),
-            Sequential( # <- Assume Upsample Here 20x20 -> 40x40
+            Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
                 self.upsample,
                 DoubleLightConv(96, 64),
-            ), 
-            Sequential( # <- Mixing (64 Input) + (64 Skip)
+            ),
+            Sequential(  # <- Mixing (64 Input) + (64 Skip)
                 C3Ghost(64+64, 64),
                 ECA(),
             ),
-            Sequential( # <- Assume Upsample Here 40x40 -> 80x80
-                self.upsample, 
+            Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
+                self.upsample,
                 DoubleLightConv(64, 32)
             ),
-            Sequential( # <- Assume Upsample Here 80x80 -> 160x160 
-                self.upsample, 
+            Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
+                self.upsample,
                 DoubleLightConv(32, 16)
-            ),  
+            ),
         ])
-        self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1) 
-        
-        ### Miscellaneous Section
+        self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1)
+
+        # Miscellaneous Section
         self.sigmoid = nn.Sigmoid()
         self.param = nn.Parameter(torch.tensor([5.0]))
         self.verbose = verbose
         self.skip_connections = []
         self._indices = {
-                "upsample": set([2, 5, 6]),                
-                "skip_connections_encoder": set([2, 4]), 
-                "skip_connections_decoder": set([0, 2])}
+            "upsample": set([2, 5, 6]),
+            "skip_connections_encoder": set([2, 4]),
+            "skip_connections_decoder": set([0, 2])}
 
-                ### FUTURE: ADAPT LATER
-                # "upsample": set([1, 3, 5, 7, 8]), 
-                # "skip_connections_encoder": set(target_modules_indices), # [2, 4, 6, 8]
-                # "skip_connections_decoder": set( [ abs(item-8) for item in reversed(target_modules_indices) ] )} 
-        
+        # FUTURE: ADAPT LATER
+        # "upsample": set([1, 3, 5, 7, 8]),
+        # "skip_connections_encoder": set(target_modules_indices), # [2, 4, 6, 8]
+        # "skip_connections_decoder": set( [ abs(item-8) for item in reversed(target_modules_indices) ] )}
+
         if torch.cuda.is_available():
-            print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")            
-        else: 
-            print(f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
+            print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
+                0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
+        else:
+            print(
+                f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
             self.activation_cache = []
-            self._assign_hooks()    
+            self._assign_hooks()
 
     def _hook_fn(self, module, input, output):
         """
@@ -208,12 +215,12 @@ class YOLOSegPlusPlus(Module):
         if self.verbose:
             print(f"\nSuccessfully cached the output {module}\n")
 
-    def _assign_hooks(self, modules: list[str] = ["0", 
-                                                "1",
-                                                "3", 
-                                                "5", 
-                                                "7",
-                                                "8"]):
+    def _assign_hooks(self, modules: list[str] = ["0",
+                                                  "1",
+                                                  "3",
+                                                  "5",
+                                                  "7",
+                                                  "8"]):
         """
         TODO: REWORK THIS METHOD
         Assigns forward hooks for YOLOv12-Seg forward
@@ -221,25 +228,25 @@ class YOLOSegPlusPlus(Module):
 
         Args:
             modules (list[str]): List containing the names of the modules
-        """        
+        """
         found = []
         for name, module in self.encoder.named_modules():
             if name in modules:
                 module.register_forward_hook(self._hook_fn)
-                if verbose: 
+                if verbose:
                     print(f"Hook registered on: {name} -> {module}")
                 found.append(name)
-        
+
         if not found:
             raise ValueError(f"Modules not found in YOLO")
-            
-    def inference(self): 
+
+    def inference(self):
         """
         FUTURE: Work in progress
         """
         pass
 
-    def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor: 
+    def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor:
         """
         Main Forward Step for YOLOSeg++ (for Training)
         Use self.inference() for inference 
@@ -251,21 +258,32 @@ class YOLOSegPlusPlus(Module):
         Returns:
             x (torch.tensor): Output tensor [B, 4, H, W]
         """
-        # Encoder (weights frozen in training loop)   
+        # Encoder (weights frozen in training loop)
         self.skip_connections = []
-        for idx, module in enumerate(self.encoder):   
-            x = module(x)  
+        for idx, module in enumerate(self.encoder):
+            x = module(x)
             if idx in self._indices.get("skip_connections_encoder"):
-                self.skip_connections.append(x) # <- Manually cache tensors for skips
+                # <- Manually cache tensors for skips
+                self.skip_connections.append(x)
 
         # Decoder (trainable)
-        for idx, module in enumerate(self.decoder): 
-            if idx in self._indices.get("skip_connections_decoder"): 
+        for idx, module in enumerate(self.decoder):
+            if idx in self._indices.get("skip_connections_decoder"):
                 skip = self.skip_connections.pop()
-                if idx == 0: 
+                if idx == 0:
+                    # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
                     x = torch.concat([skip, logits], dim=1)
-                    # pass
-                else: 
+                    # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
+
+                    # ---SOFT GATING---
+                    # x = (skip * logits) + skip
+                    # ---SOFT GATING---
+
+                    # ---NO LOGITS---
+                    # x = skip
+                    # ---NO LOGITS---
+
+                else:
                     x = torch.concat([x, skip], dim=1)
             x = module(x)
         out = self.output(x)

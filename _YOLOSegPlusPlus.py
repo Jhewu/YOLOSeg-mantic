@@ -9,26 +9,7 @@ import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
 import torch.nn.functional as F
 
-class SingleLightConv(Module):
-    def __init__(self, in_channels, out_channels, k1=3):
-        super().__init__()
-        self.conv = LightConv(
-                c1=in_channels, 
-                c2=out_channels, 
-                k=k1, 
-                act=True)
-                
-        # 1x1 conv to match channels if needed
-        self.residual_conv = (
-            Conv2d(in_channels, out_channels, kernel_size=1)
-            if in_channels != out_channels else nn.Identity()
-        )    
-
-    def forward(self, x):
-        residual = self.residual_conv(x)
-        out = self.conv(x)
-        out+=residual
-        return out
+from nms import non_max_suppression
 
 class DoubleLightConv(Module):
     def __init__(self, in_channels, out_channels, k1=3, k2=3):
@@ -145,7 +126,7 @@ class YOLOSegPlusPlus(Module):
 
         super().__init__()
         ### YOLO predictor and backbone
-        # self.yolo_predictor = predictor.model.model         # <- For inference
+        self.yolo_predictor = predictor.model.model         # <- For inference
 
         self.encoder = nn.ModuleList(module for module in predictor.model.model.model[0:5]) 
         for param in self.encoder.parameters(): # <- Frozen
@@ -154,7 +135,7 @@ class YOLOSegPlusPlus(Module):
         self.upsample = Upsample(scale_factor = 2, mode = "bilinear", align_corners = False)
         self.decoder = nn.ModuleList([
             Sequential( # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128, 96, n=1), 
+                C3Ghost(128+1, 96, n=1), 
                 ECA(),
             ),
             Sequential( # <- Assume Upsample Here 20x20 -> 40x40
@@ -175,6 +156,7 @@ class YOLOSegPlusPlus(Module):
             ),  
         ])
         self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1) 
+        self.verbose = True
         
         ### Miscellaneous Section
         self.sigmoid = nn.Sigmoid()
@@ -191,12 +173,12 @@ class YOLOSegPlusPlus(Module):
                 # "skip_connections_encoder": set(target_modules_indices), # [2, 4, 6, 8]
                 # "skip_connections_decoder": set( [ abs(item-8) for item in reversed(target_modules_indices) ] )} 
         
-        if torch.cuda.is_available():
-            print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")            
-        else: 
-            print(f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
-            self.activation_cache = []
-            self._assign_hooks()    
+        # if torch.cuda.is_available():
+        #     print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")            
+        # else: 
+        # print(f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
+        self.activation_cache = []
+        self._assign_hooks()    
 
     def _hook_fn(self, module, input, output):
         """
@@ -207,12 +189,7 @@ class YOLOSegPlusPlus(Module):
         if self.verbose:
             print(f"\nSuccessfully cached the output {module}\n")
 
-    def _assign_hooks(self, modules: list[str] = ["0", 
-                                                "1",
-                                                "3", 
-                                                "5", 
-                                                "7",
-                                                "8"]):
+    def _assign_hooks(self, modules: list[str] = ["2", "4"]):
         """
         TODO: REWORK THIS METHOD
         Assigns forward hooks for YOLOv12-Seg forward
@@ -225,18 +202,93 @@ class YOLOSegPlusPlus(Module):
         for name, module in self.encoder.named_modules():
             if name in modules:
                 module.register_forward_hook(self._hook_fn)
-                if verbose: 
+                if self.verbose: 
                     print(f"Hook registered on: {name} -> {module}")
                 found.append(name)
         
         if not found:
             raise ValueError(f"Modules not found in YOLO")
-            
-    def inference(self): 
+
+    def inference(self, x: torch.tensor):
         """
-        FUTURE: Work in progress
+        Unrolled Inference Step for YOLOSeg++
+        - Replaces the Python loop and conditionals with direct module calls.
+        - Assumes skip indices are {0, 2} and activation_cache is populated correctly.
         """
-        pass
+        
+        # --- YOLOSeg++ Preprocessing (Remains the same) ---
+        yolo_out = self.yolo_predictor(x)
+        detect_branch, cls_branch = yolo_out
+        a, b, c = cls_branch
+        # detect_out = non_max_suppression(detect_branch)[0] # Note: This is still a slow operation on CPU
+        logits = a[:, -1:]
+        
+        # -------------------------------------------------------------------
+        # --- Unrolled Decoder (Indices 0, 1, 2) ---
+        
+        # 🌟 Step 0 (idx = 0): Skip Connection and Concatenation with logits
+        # skip = self.activation_cache.pop() # This skip is for idx=2
+        # skip = self.activation_cache.pop() # This skip is for idx=0 (LAST one in cache)
+        # Since the cache is popped, we assume the last element popped is the one needed for the first decoder stage (idx=0)
+        skip_0 = self.activation_cache.pop()
+        
+        # Conditional logic: if idx == 0: x = torch.concat([skip, logits], dim=1)
+        x = torch.concat([skip_0, logits], dim=1)
+        x = self.decoder[0](x)
+        
+        # -------------------------------------------------------------------
+        
+        # ⚙️ Step 1 (idx = 1): Standard Decoder Module
+        # Conditional logic: No skip connection for idx = 1
+        x = self.decoder[1](x)
+        
+        # -------------------------------------------------------------------
+        
+        # 🌟 Step 2 (idx = 2): Skip Connection and Concatenation with previous x
+        # skip = self.activation_cache.pop() # This is the skip for idx=2 (FIRST one in cache)
+        skip_2 = self.activation_cache.pop()
+        
+        # Conditional logic: else: x = torch.concat([x, skip], dim=1)
+        x = torch.concat([x, skip_2], dim=1)
+        x = self.decoder[2](x)
+    
+        # -------------------------------------------------------------------
+        # --- Remaining Decoder Modules (if any) ---
+        
+        # Loop over the rest of the decoder if its size > 3
+        for idx in range(3, len(self.decoder)):
+             x = self.decoder[idx](x)
+             # If you have more skip indices (e.g., 4, 6, ...), you'd need more
+             # explicit code here or accept a partial loop.
+        
+        # -------------------------------------------------------------------
+    
+        out = self.output(x)
+        return out
+        
+#     def inference(self, x: torch.tensor): 
+#         """
+#         FUTURE: Work in progress
+#         """
+# 
+#         {"skip_connections_decoder": set([0, 2])}
+# 
+#         
+#         yolo_out = self.yolo_predictor(x)
+#         detect_branch, cls_branch = yolo_out
+#         a, b, c = cls_branch
+#         detect_out = non_max_suppression(detect_branch)[0]
+#         logits = a[:, -1:]
+#         for idx, module in enumerate(self.decoder): 
+#             if idx in self._indices.get("skip_connections_decoder"): 
+#                 skip = self.activation_cache.pop()
+#                 if idx == 0: 
+#                     x = torch.concat([skip, logits], dim=1)
+#                 else: 
+#                     x = torch.concat([x, skip], dim=1)
+#             x = module(x)
+#         out = self.output(x)
+#         return out
 
     def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor: 
         """
@@ -262,10 +314,9 @@ class YOLOSegPlusPlus(Module):
             if idx in self._indices.get("skip_connections_decoder"): 
                 skip = self.skip_connections.pop()
                 if idx == 0: 
-                    # x = torch.concat([skip, logits], dim=1)
-                    # x = skip + logits
-                    pass
-                    x = skip
+                    x = torch.concat([skip, logits], dim=1)
+                    # x = (skip * logits) + skip                    
+                    # x = skip
                 else: 
                     x = torch.concat([x, skip], dim=1)
             x = module(x)

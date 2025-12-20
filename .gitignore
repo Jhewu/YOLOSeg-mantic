@@ -8,3 +8,6 @@ trained*/
 old_checkpoint/*
 new_yolo_checkpoint/
 ablation_study/*
+data/stacked_segmentation/*
+previous_ablation_study/ 
+pretrained_detect_yolo/*

@@ -160,7 +160,7 @@ class YOLOSegPlusPlus(Module):
             scale_factor=2, mode="bilinear", align_corners=False)
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128, 96, n=1),
+                C3Ghost(128+1, 96, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
@@ -188,9 +188,14 @@ class YOLOSegPlusPlus(Module):
         self.verbose = verbose
         self.skip_connections = []
         self._indices = {
-            "upsample": set([2, 5, 6]),
-            "skip_connections_encoder": set([2, 4]),
-            "skip_connections_decoder": set([0, 2])}
+                    "upsample": set([2, 5, 6]),
+                    "skip_connections_encoder": set([2, 4]),
+                    "skip_connections_decoder": set([2])}
+        
+        # self._indices = {
+        #     "upsample": set([2, 5, 6]),
+        #     "skip_connections_encoder": set([2, 4]),
+        #     "skip_connections_decoder": set([0, 2])}
 
         # FUTURE: ADAPT LATER
         # "upsample": set([1, 3, 5, 7, 8]),
@@ -267,24 +272,23 @@ class YOLOSegPlusPlus(Module):
                 self.skip_connections.append(x)
 
         # Decoder (trainable)
+        skip = self.skip_connections.pop()
+        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
+        x = torch.concat([skip, logits], dim=1)
+        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
+
+        # ---SOFT GATING---
+        # x = (skip * logits) + skip
+        # ---SOFT GATING---
+
+        # ---NO LOGITS---
+        # x = skip
+        # ---NO LOGITS---
+
         for idx, module in enumerate(self.decoder):
             if idx in self._indices.get("skip_connections_decoder"):
                 skip = self.skip_connections.pop()
-                if idx == 0:
-                    # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-                    x = torch.concat([skip, logits], dim=1)
-                    # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-
-                    # ---SOFT GATING---
-                    # x = (skip * logits) + skip
-                    # ---SOFT GATING---
-
-                    # ---NO LOGITS---
-                    # x = skip
-                    # ---NO LOGITS---
-
-                else:
-                    x = torch.concat([x, skip], dim=1)
+                x = torch.concat([x, skip], dim=1)
             x = module(x)
         out = self.output(x)
         return out

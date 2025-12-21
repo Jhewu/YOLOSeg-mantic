@@ -213,12 +213,6 @@ class Trainer:
         return train_dataloader, val_dataloader
 
     def train(self) -> None:
-        """
-        Trains YOLOU-Seg++ model
-
-        TODO: ADD DESCRIPTION LATER
-        """
-
         # Add model to device
         self.model.to(self.device)
         self.model.train()
@@ -557,7 +551,9 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
+    p_args = dict(
+model="pretrained_detect_yolo/yolo12n_det/weights/best.pt",
+    # model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
                   data=f"data/data.yaml",
                   verbose=True,
                   imgsz=160,

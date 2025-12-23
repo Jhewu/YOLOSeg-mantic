@@ -151,16 +151,20 @@ class YOLOSegPlusPlus(Module):
 
         super().__init__()
         # YOLO predictor and backbone
+        self.yolo = predictor
         self.encoder = nn.ModuleList(
             module for module in predictor.model.model.model[0:5])
         for param in self.encoder.parameters():  # <- Frozen
             param.requires_grad = False
         self.encoder.eval()
+        # self.upsample = Upsample(
+        #     scale_factor=2, mode="bilinear", align_corners=False)
         self.upsample = Upsample(
-            scale_factor=2, mode="bilinear", align_corners=False)
+            scale_factor=2, mode="nearest")
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128+1, 96, n=1),
+                # C3Ghost(128+1, 96, n=1),
+                C3Ghost(128, 96, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
@@ -188,10 +192,10 @@ class YOLOSegPlusPlus(Module):
         self.verbose = verbose
         self.skip_connections = []
         self._indices = {
-                    "upsample": set([2, 5, 6]),
-                    "skip_connections_encoder": set([2, 4]),
-                    "skip_connections_decoder": set([2])}
-        
+            "upsample": set([2, 5, 6]),
+            "skip_connections_encoder": set([2, 4]),
+            "skip_connections_decoder": set([2])}
+
         # self._indices = {
         #     "upsample": set([2, 5, 6]),
         #     "skip_connections_encoder": set([2, 4]),
@@ -274,11 +278,11 @@ class YOLOSegPlusPlus(Module):
         # Decoder (trainable)
         skip = self.skip_connections.pop()
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-        x = torch.concat([skip, logits], dim=1)
+        # x = torch.concat([skip, logits], dim=1)
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
 
         # ---SOFT GATING---
-        # x = (skip * logits) + skip
+        x = (skip * logits) + skip
         # ---SOFT GATING---
 
         # ---NO LOGITS---

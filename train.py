@@ -551,10 +551,8 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(
-model="pretrained_detect_yolo/yolo12n_det/weights/best.pt",
-    # model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
-                  data=f"data/data.yaml",
+    p_args = dict(model="pretrained_detect_yolo/yolo12n_det/weights/best.pt",
+                  data="data/data.yaml",
                   verbose=True,
                   imgsz=160,
                   save=False)

@@ -96,8 +96,7 @@ class ECA(Module):
 class YOLOSegPlusPlus(Module):
     def __init__(self,
                  predictor: CustomDetectionPredictor,
-                 verbose: bool = False,
-                 target_modules_indices: List[int] = [2, 4, 6]):
+                 verbose: bool = False):
         """
         WARNING: DOCUMENTATION NOT UPDATED
 
@@ -106,7 +105,6 @@ class YOLOSegPlusPlus(Module):
 
         Args: 
             predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor allowing 4-channels
-            target_modules_indices (list [int]): list of indices to add skip connections (in YOLOv12-Seg every downsample)
 
         Attributes: 
             yolo_predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor instance  
@@ -142,25 +140,20 @@ class YOLOSegPlusPlus(Module):
         -------------------------------------------------------------------------------------------------------------
 
         """
-        # TODO
-        # (1) Make the individual modules declaration adaptive
-        # (2) Use iter() instead of indices, which might be prone to breaking
-        # (3) Update Documentation
-        # (4) Implement Inference Step
-        # (5) Clean up Methods
 
         super().__init__()
-        # YOLO predictor and backbone
-        self.yolo = predictor
-        self.encoder = nn.ModuleList(
-            module for module in predictor.model.model.model[0:5])
-        for param in self.encoder.parameters():  # <- Frozen
+        # ---YOLO predictor and backbone---
+        self.yolo = predictor.model.model
+        for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
-        self.encoder.eval()
-        # self.upsample = Upsample(
-        #     scale_factor=2, mode="bilinear", align_corners=False)
+        self.yolo.eval()
+
+        self.encoder = self.yolo.model[:5]
+        
         self.upsample = Upsample(
-            scale_factor=2, mode="nearest")
+            scale_factor=2, mode="bilinear", align_corners=False)
+
+        # ---Decoder Body---
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
                 # C3Ghost(128+1, 96, n=1),
@@ -169,7 +162,12 @@ class YOLOSegPlusPlus(Module):
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
                 self.upsample,
-                DoubleLightConv(96, 64),
+                SingleLightConv(96, 64),
+                ECA()
+
+                # ---PREVIOUS---
+                # DoubleLightConv(96, 64),
+                # ---PREVIOUS---
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
                 C3Ghost(64+64, 64),
@@ -177,35 +175,35 @@ class YOLOSegPlusPlus(Module):
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.upsample,
-                DoubleLightConv(64, 32)
+
+                SingleLightConv(64, 32),
+                ECA()
+
+                # ---PREVIOUS---
+                # DoubleLightConv(64, 32)
+                # ---PREVIOUS---
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
                 self.upsample,
-                DoubleLightConv(32, 16)
+
+                SingleLightConv(32, 16),
+                ECA()
+
+                # ---PREVIOUS---
+                # DoubleLightConv(32, 16)
+                # ---PREVIOUS---
             ),
         ])
         self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1)
 
-        # Miscellaneous Section
-        self.sigmoid = nn.Sigmoid()
-        self.param = nn.Parameter(torch.tensor([5.0]))
+        # ---Miscellaneous Section---
         self.verbose = verbose
-        self.skip_connections = []
-        self._indices = {
-            "upsample": set([2, 5, 6]),
-            "skip_connections_encoder": set([2, 4]),
-            "skip_connections_decoder": set([2])}
 
-        # self._indices = {
-        #     "upsample": set([2, 5, 6]),
-        #     "skip_connections_encoder": set([2, 4]),
-        #     "skip_connections_decoder": set([0, 2])}
-
-        # FUTURE: ADAPT LATER
-        # "upsample": set([1, 3, 5, 7, 8]),
-        # "skip_connections_encoder": set(target_modules_indices), # [2, 4, 6, 8]
-        # "skip_connections_decoder": set( [ abs(item-8) for item in reversed(target_modules_indices) ] )}
-
+        # ---Indices--- 
+        self.upsample_idx = {2, 5, 6}
+        self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
+        self.decoder_skip_idx = {2}
+        
         if torch.cuda.is_available():
             print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
                 0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
@@ -213,7 +211,7 @@ class YOLOSegPlusPlus(Module):
             print(
                 f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
             self.activation_cache = []
-            self._assign_hooks()
+            self._assign_hooks(modules=list(self.decoder_skip_idx))
 
     def _hook_fn(self, module, input, output):
         """
@@ -224,14 +222,8 @@ class YOLOSegPlusPlus(Module):
         if self.verbose:
             print(f"\nSuccessfully cached the output {module}\n")
 
-    def _assign_hooks(self, modules: list[str] = ["0",
-                                                  "1",
-                                                  "3",
-                                                  "5",
-                                                  "7",
-                                                  "8"]):
+    def _assign_hooks(self, modules: list[str] = [2, 4]):
         """
-        TODO: REWORK THIS METHOD
         Assigns forward hooks for YOLOv12-Seg forward
         Depends on self._hook_fn()
 
@@ -248,35 +240,73 @@ class YOLOSegPlusPlus(Module):
 
         if not found:
             raise ValueError(f"Modules not found in YOLO")
+            
+    def inference(self, x: torch.tensor) -> torch.tensor:
+        """
+        Inference forward step for YOLOSeg++
+        Run YOLO forward, and YOLOSeg++ Segmentator Head sequentially
 
-    def inference(self):
+        Args:
+            x (torch.tensor): Input tensor [B, 4, H, W]
+
+        Returns:
+            x (torch.tensor): Output tensor [B, 1, H, W]
         """
-        FUTURE: Work in progress
-        """
-        pass
+
+        with torch.no_grad():
+            # ---YOLO detect forward---
+            x = self.yolo(x)
+            detect_branch, cls_branch = x
+            twenty, ten, five = cls_branch  # <- Resolution-wise
+            logits = twenty[:, -1:]
+            # ---YOLO detect forward---
+
+            i = len(self.activation_cache) - 1  # <- Start from last index
+
+            # ---Decoder "Semantic Bottleneck"---
+            skip = self.activation_cache[-1]
+            x = (skip * logits) + skip
+            i -= 1
+            # ---Decoder "Semantic Bottleneck"---
+
+            # ---Decoder Body---
+            for idx, module in enumerate(self.decoder):
+                if idx in self._indices.get("skip_connections_decoder"):
+                    skip = self.activation_cache[i]
+                    x = torch.concat([x, skip], dim=1)
+                    i -= 1
+                x = module(x)
+            out = self.output(x)
+            # ---Decoder Body---
+        self.activation_cache.clear()
+        return out
 
     def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor:
         """
-        Main Forward Step for YOLOSeg++ (for Training)
-        Use self.inference() for inference 
+        Training ONLY forward step for YOLOSeg++
+        YOLO logits are precomputed to reduce training time (check generate_objectmaps.py)
+        Use self.inference() for inference
 
         Args:
             x        (torch.tensor):  Input tensor [B, 4, H, W]
             heatmaps (torch.tensor):  List of resized heatmaps tensors to concatenate at skips [1, 1, h, w], where h and w are resized heights and weights (< H and W)
 
         Returns:
-            x (torch.tensor): Output tensor [B, 4, H, W]
+            x (torch.tensor): Output tensor [B, 1, H, W]
         """
-        # Encoder (weights frozen in training loop)
-        self.skip_connections = []
+        #---Encoder (weights frozen in training loop)---    
+        skip_connections = []
         for idx, module in enumerate(self.encoder):
             x = module(x)
-            if idx in self._indices.get("skip_connections_encoder"):
-                # <- Manually cache tensors for skips
-                self.skip_connections.append(x)
+            if idx in self.encoder_skip_idx: 
+                # Manually cache tensors for skips
+                skip_connections.append(x)
 
-        # Decoder (trainable)
-        skip = self.skip_connections.pop()
+        #---Decoder "Semantic Bottleneck" (trainable)---
+        i = len(skip_connections) - 1  # <- Start from last index
+        skip = skip_connections[i]
+        i -= 1
+        
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
         # x = torch.concat([skip, logits], dim=1)
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
@@ -289,10 +319,13 @@ class YOLOSegPlusPlus(Module):
         # x = skip
         # ---NO LOGITS---
 
+        # ---Decoder Body (Trainable)---
+        
         for idx, module in enumerate(self.decoder):
-            if idx in self._indices.get("skip_connections_decoder"):
-                skip = self.skip_connections.pop()
+            if idx in self.decoder_skip_idx: 
+                skip = skip_connections[i]
                 x = torch.concat([x, skip], dim=1)
+                i -=1
             x = module(x)
         out = self.output(x)
         return out

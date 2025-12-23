@@ -27,7 +27,7 @@ print(f"PyTorch using {torch.get_num_threads()} threads.")
 def get_logits(model: YOLOSegPlusPlus,
                x: torch.tensor,
                device: str = "cuda"):
-    model = model.predictor.model.model
+    model = model.yolo.model.model
     model.to(device)
 
     x = model(x)
@@ -52,8 +52,8 @@ def profile_model(model: YOLOSegPlusPlus,
                 with record_function("model_inference"):
                     dummy_logits = get_logits(model, dummy_data, device)
                     model(dummy_data, dummy_logits)
-                    print(prof.key_averages().table(
-                        sort_by="cpu_time_total", row_limit=10))
+            print(prof.key_averages().table(
+                sort_by="cpu_time_total", row_limit=10))
         else:
             with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
                 with record_function("model_inference"):

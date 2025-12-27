@@ -96,11 +96,12 @@ class ECA(Module):
 class YOLOSegPlusPlus(Module):
     def __init__(self,
                  predictor: CustomDetectionPredictor,
+                 training: bool = True,
                  verbose: bool = False):
         """
         WARNING: DOCUMENTATION NOT UPDATED
 
-        Creates a YOLOU-Seg++ Network with Pretrained YOLOv12 (detection) model
+        Creates a YOLOSeg++ Network with Pretrained YOLOv12 (detection) model
         Main Idea: Using YOLOv12 bbox as guidance in UNet skip connections and recycling YOLOv12 backbone as the encoder
 
         Args: 
@@ -147,9 +148,8 @@ class YOLOSegPlusPlus(Module):
         for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
         self.yolo.eval()
-
         self.encoder = self.yolo.model[:5]
-        
+
         self.upsample = Upsample(
             scale_factor=2, mode="bilinear", align_corners=False)
 
@@ -162,11 +162,11 @@ class YOLOSegPlusPlus(Module):
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
                 self.upsample,
-                SingleLightConv(96, 64),
-                ECA()
+                # SingleLightConv(96, 64),
+                # ECA(),
 
                 # ---PREVIOUS---
-                # DoubleLightConv(96, 64),
+                DoubleLightConv(96, 64),
                 # ---PREVIOUS---
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
@@ -176,18 +176,18 @@ class YOLOSegPlusPlus(Module):
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.upsample,
 
-                SingleLightConv(64, 32),
-                ECA()
+                # SingleLightConv(64, 32),
+                # ECA(),
 
                 # ---PREVIOUS---
-                # DoubleLightConv(64, 32)
+                DoubleLightConv(64, 32)
                 # ---PREVIOUS---
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
                 self.upsample,
 
                 SingleLightConv(32, 16),
-                ECA()
+                ECA(),
 
                 # ---PREVIOUS---
                 # DoubleLightConv(32, 16)
@@ -199,19 +199,21 @@ class YOLOSegPlusPlus(Module):
         # ---Miscellaneous Section---
         self.verbose = verbose
 
-        # ---Indices--- 
+        # ---Indices---
         self.upsample_idx = {2, 5, 6}
         self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
         self.decoder_skip_idx = {2}
-        
-        if torch.cuda.is_available():
+
+        print(list(self.encoder_skip_idx))
+
+        if torch.cuda.is_available() and training:
             print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
                 0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
         else:
             print(
-                f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
+                f"\nATTENTION: CUDA is not available (CPU) or eval() using forward hooks to save on compute...\n")
             self.activation_cache = []
-            self._assign_hooks(modules=list(self.decoder_skip_idx))
+            self._assign_hooks()
 
     def _hook_fn(self, module, input, output):
         """
@@ -222,7 +224,7 @@ class YOLOSegPlusPlus(Module):
         if self.verbose:
             print(f"\nSuccessfully cached the output {module}\n")
 
-    def _assign_hooks(self, modules: list[str] = [2, 4]):
+    def _assign_hooks(self, modules: list[str] = ["2", "4"]):
         """
         Assigns forward hooks for YOLOv12-Seg forward
         Depends on self._hook_fn()
@@ -234,13 +236,13 @@ class YOLOSegPlusPlus(Module):
         for name, module in self.encoder.named_modules():
             if name in modules:
                 module.register_forward_hook(self._hook_fn)
-                if verbose:
+                if self.verbose:
                     print(f"Hook registered on: {name} -> {module}")
                 found.append(name)
 
         if not found:
             raise ValueError(f"Modules not found in YOLO")
-            
+
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
         Inference forward step for YOLOSeg++
@@ -264,14 +266,14 @@ class YOLOSegPlusPlus(Module):
             i = len(self.activation_cache) - 1  # <- Start from last index
 
             # ---Decoder "Semantic Bottleneck"---
-            skip = self.activation_cache[-1]
+            skip = self.activation_cache[i]
             x = (skip * logits) + skip
             i -= 1
             # ---Decoder "Semantic Bottleneck"---
 
             # ---Decoder Body---
             for idx, module in enumerate(self.decoder):
-                if idx in self._indices.get("skip_connections_decoder"):
+                if idx in self.decoder_skip_idx:
                     skip = self.activation_cache[i]
                     x = torch.concat([x, skip], dim=1)
                     i -= 1
@@ -288,25 +290,25 @@ class YOLOSegPlusPlus(Module):
         Use self.inference() for inference
 
         Args:
-            x        (torch.tensor):  Input tensor [B, 4, H, W]
-            heatmaps (torch.tensor):  List of resized heatmaps tensors to concatenate at skips [1, 1, h, w], where h and w are resized heights and weights (< H and W)
+            x (torch.tensor): Input tensor [B, 4, H, W]
+            logits (torch.tensor): YOLO Detect logits to concatenate at skips [B, 1, 20, 20]
 
         Returns:
             x (torch.tensor): Output tensor [B, 1, H, W]
         """
-        #---Encoder (weights frozen in training loop)---    
+        # ---Encoder (weights frozen in training loop)---
         skip_connections = []
         for idx, module in enumerate(self.encoder):
             x = module(x)
-            if idx in self.encoder_skip_idx: 
+            if idx in self.encoder_skip_idx:
                 # Manually cache tensors for skips
                 skip_connections.append(x)
 
-        #---Decoder "Semantic Bottleneck" (trainable)---
+        # ---Decoder "Semantic Bottleneck" (trainable)---
         i = len(skip_connections) - 1  # <- Start from last index
         skip = skip_connections[i]
         i -= 1
-        
+
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
         # x = torch.concat([skip, logits], dim=1)
         # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
@@ -320,12 +322,12 @@ class YOLOSegPlusPlus(Module):
         # ---NO LOGITS---
 
         # ---Decoder Body (Trainable)---
-        
+
         for idx, module in enumerate(self.decoder):
-            if idx in self.decoder_skip_idx: 
+            if idx in self.decoder_skip_idx:
                 skip = skip_connections[i]
                 x = torch.concat([x, skip], dim=1)
-                i -=1
+                i -= 1
             x = module(x)
         out = self.output(x)
         return out

@@ -24,42 +24,27 @@ torch.set_num_threads(1)
 print(f"PyTorch using {torch.get_num_threads()} threads.")
 
 
-def get_logits(model: YOLOSegPlusPlus,
-               x: torch.tensor,
-               device: str = "cuda"):
-    model = model.yolo.model.model
-    model.to(device)
-
-    x = model(x)
-
-    detect_branch, cls_branch = x
-    a, b, c = cls_branch
-
-    return a[:, -1:]
-
-
 def profile_model(model: YOLOSegPlusPlus,
                   device: str = "gpu",
                   calculate_logits: bool = False,
                   ) -> None:
     model.to(device)
+    model.eval()
+
     dummy_data = torch.randn(128, 4, 160, 160).to(device)
-    dummy_logits = torch.randn(128, 1, 20, 20).to(device)
 
     if device == "cpu":
-        if calculate_logits:
-            with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
-                with record_function("model_inference"):
-                    dummy_logits = get_logits(model, dummy_data, device)
-                    model(dummy_data, dummy_logits)
-            print(prof.key_averages().table(
-                sort_by="cpu_time_total", row_limit=10))
-        else:
-            with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
-                with record_function("model_inference"):
-                    model(dummy_data, dummy_logits)
-            print(prof.key_averages().table(
-                sort_by="cpu_time_total", row_limit=10))
+        with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+            with record_function("model_inference"):
+                model.inference(dummy_data)
+        print(prof.key_averages().table(
+            sort_by="cpu_time_total", row_limit=10))
+        # else:
+        #     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+        #         with record_function("model_inference"):
+        #             model(dummy_data, dummy_logits)
+        #     print(prof.key_averages().table(
+        #         sort_by="cpu_time_total", row_limit=10))
 
         # ------KEEP FOR NOW------
         # print(
@@ -108,7 +93,8 @@ if __name__ == "__main__":
     YOLO_predictor.setup_model(p_args["model"])
 
     # Create model instance
-    model = YOLOSegPlusPlus(predictor=YOLO_predictor)
+    model = YOLOSegPlusPlus(predictor=YOLO_predictor,
+                            training=False)
 
     # Profile model
     profile_model(model=model,

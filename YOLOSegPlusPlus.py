@@ -4,6 +4,11 @@ from ultralytics.nn.modules import C3Ghost, DWConv, C2f, DWConvTranspose2d, Conv
 # local/custom scripts
 from custom_yolo_predictor.custom_detseg_predictor import CustomDetectionPredictor
 
+# Internal Libs
+from collections import deque
+
+
+# External libs
 import torch
 import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
@@ -204,15 +209,13 @@ class YOLOSegPlusPlus(Module):
         self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
         self.decoder_skip_idx = {2}
 
-        print(list(self.encoder_skip_idx))
-
         if torch.cuda.is_available() and training:
             print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
                 0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
         else:
             print(
                 f"\nATTENTION: CUDA is not available (CPU) or eval() using forward hooks to save on compute...\n")
-            self.activation_cache = []
+            self.activation_cache = deque(maxlen=3)
             self._assign_hooks()
 
     def _hook_fn(self, module, input, output):
@@ -220,7 +223,7 @@ class YOLOSegPlusPlus(Module):
         Forward hook, once activate appends the output to
         self.activation_cache
         """
-        self.activation_cache.append(output)
+        self.activation_cache.append(output.detach())
         if self.verbose:
             print(f"\nSuccessfully cached the output {module}\n")
 
@@ -234,6 +237,7 @@ class YOLOSegPlusPlus(Module):
         """
         found = []
         for name, module in self.encoder.named_modules():
+            modules = set(modules)
             if name in modules:
                 module.register_forward_hook(self._hook_fn)
                 if self.verbose:
@@ -267,7 +271,10 @@ class YOLOSegPlusPlus(Module):
 
             # ---Decoder "Semantic Bottleneck"---
             skip = self.activation_cache[i]
-            x = (skip * logits) + skip
+
+            # x = (skip * logits) + skip
+            x = skip * (logits + 1)
+
             i -= 1
             # ---Decoder "Semantic Bottleneck"---
 

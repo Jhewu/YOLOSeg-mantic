@@ -1,101 +1,15 @@
-from ultralytics.nn.tasks import BaseModel, parse_model
-
-from ultralytics.utils.loss import v8SegmentationLoss
-
-import contextlib
-import pickle
-import re
-import types
+# Internal Import
 from copy import deepcopy
-from pathlib import Path
 
+# External Import
+from ultralytics.nn.tasks import BaseModel, parse_model
 import torch
-import torch.nn as nn
-
-from ultralytics.nn.autobackend import check_class_names
-from ultralytics.nn.modules import (
-    AIFI,
-    C1,
-    C2,
-    C2PSA,
-    C3,
-    C3TR,
-    ELAN1,
-    OBB,
-    PSA,
-    SPP,
-    SPPELAN,
-    SPPF,
-    A2C2f,
-    AConv,
-    ADown,
-    Bottleneck,
-    BottleneckCSP,
-    C2f,
-    C2fAttn,
-    C2fCIB,
-    C2fPSA,
-    C3Ghost,
-    C3k2,
-    C3x,
-    CBFuse,
-    CBLinear,
-    Classify,
-    Concat,
-    Conv,
-    Conv2,
-    ConvTranspose,
-    Detect,
-    DWConv,
-    DWConvTranspose2d,
-    Focus,
-    GhostBottleneck,
-    GhostConv,
-    HGBlock,
-    HGStem,
-    ImagePoolingAttn,
-    Index,
-    LRPCHead,
-    Pose,
-    RepC3,
-    RepConv,
-    RepNCSPELAN4,
-    RepVGGDW,
-    ResNetLayer,
-    RTDETRDecoder,
-    SCDown,
-    Segment,
-    TorchVision,
-    WorldDetect,
-    YOLOEDetect,
-    YOLOESegment,
-    v10Detect,
-)
-from ultralytics.utils import LOGGER, YAML, colorstr, emojis
-from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
-from ultralytics.utils.loss import (
-    E2EDetectLoss,
-    v8ClassificationLoss,
-    v8DetectionLoss,
-    v8OBBLoss,
-    v8PoseLoss,
-    v8SegmentationLoss,
-)
-from ultralytics.utils.ops import make_divisible
-from ultralytics.utils.patches import torch_load
+from ultralytics.nn.modules import Detect, Segment, YOLOESegment, Pose, OBB
+from ultralytics.utils import LOGGER
 from ultralytics.utils.plotting import feature_visualization
-from ultralytics.utils.torch_utils import (
-    fuse_conv_and_bn,
-    fuse_deconv_and_bn,
-    initialize_weights,
-    intersect_dicts,
-    model_info,
-    scale_img,
-    smart_inference_mode,
-    time_sync,
-)
+from ultralytics.utils.torch_utils import initialize_weights
 
-
+# Local Import
 from custom_yolo_trainer.custom_v8_segmentation_loss import Customv8SegmentationLoss
 
 
@@ -206,6 +120,8 @@ class CustomBaseModel(BaseModel):
 
 class CustomDetectionModel(CustomBaseModel):
     """YOLO detection model.
+
+    JUN COMMENT: Imported here for subclassing BaseModel
 
     This class implements the YOLO detection architecture, handling model initialization, forward pass, augmented
     inference, and loss computation for object detection tasks.

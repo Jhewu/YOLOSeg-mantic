@@ -569,29 +569,38 @@ if __name__ == "__main__":
     # Create YOLOU instance
     model = YOLOSegPlusPlus(predictor=YOLO_trainer)
 
-    """
-    trainable_count = count_parameters(model, only_trainable=True)
-    all_counts = count_parameters(model, only_trainable=False)
+    x = torch.zeros(1, 4, 160, 160)
 
-    print(f"Total Trainable Parameters: {trainable_count:,}")
-    print(f"Total All Parameters (Trainable + Fixed): {all_counts[1]:,}")
-    print("-" * 30)
+    # YOLO_trainer.model.predict(x)
+    item = YOLO_trainer.model.predict(
+        x, return_features=True, seg_features_idxs={2, 4})
 
-    trainer = Trainer(model=model,
-                      data_path="data/stacked_segmentation",
-                      model_path=None,
-                      load_and_train=False,
-                      mixed_precision=True,
+    print(len(item))
 
-                      epochs=75,
-                      image_size=160,
-                      batch_size=128,
-                      lr=1e-4,
+    # YOLO_trainer.model._predict_once(x)
 
-                      early_stopping=True,
-                      early_stopping_start=50,
-                      patience=10,
-                      device="cuda"
-                      )
-    trainer.train()
-    """
+
+#     trainable_count = count_parameters(model, only_trainable=True)
+#     all_counts = count_parameters(model, only_trainable=False)
+#
+#     print(f"Total Trainable Parameters: {trainable_count:,}")
+#     print(f"Total All Parameters (Trainable + Fixed): {all_counts[1]:,}")
+#     print("-" * 30)
+#
+#     trainer = Trainer(model=model,
+#                       data_path="data/stacked_segmentation",
+#                       model_path=None,
+#                       load_and_train=False,
+#                       mixed_precision=True,
+#
+#                       epochs=75,
+#                       image_size=160,
+#                       batch_size=128,
+#                       lr=1e-4,
+#
+#                       early_stopping=True,
+#                       early_stopping_start=50,
+#                       patience=10,
+#                       device="cuda"
+#                       )
+#     trainer.train()

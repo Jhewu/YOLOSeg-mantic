@@ -150,6 +150,7 @@ class YOLOSegPlusPlus(Module):
         super().__init__()
         # ---YOLO predictor and backbone---
         self.yolo = predictor.model.model
+        self.yolo = predictor.model
         for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
         self.yolo.eval()

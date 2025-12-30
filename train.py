@@ -1,5 +1,6 @@
 from YOLOSegPlusPlus import YOLOSegPlusPlus
 from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
+from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
 from torch import nn
@@ -558,13 +559,17 @@ if __name__ == "__main__":
                   save=False)
 
     # Create predictor and Load checkpoint
-    YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
-    YOLO_predictor.setup_model(p_args["model"])
+    # YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
+    YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
+
+    YOLO_trainer.setup_model()
+    # YOLO_predictor.setup_model(p_args["model"])
     # modify_YOLO(YOLO_predictor)
 
     # Create YOLOU instance
-    model = YOLOSegPlusPlus(predictor=YOLO_predictor)
+    model = YOLOSegPlusPlus(predictor=YOLO_trainer)
 
+    """
     trainable_count = count_parameters(model, only_trainable=True)
     all_counts = count_parameters(model, only_trainable=False)
 
@@ -589,3 +594,4 @@ if __name__ == "__main__":
                       device="cuda"
                       )
     trainer.train()
+    """

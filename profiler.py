@@ -9,6 +9,7 @@ import os
 
 # External Lib
 import torch
+from torch import nn
 from torch.profiler import profile, ProfilerActivity, record_function
 
 # Set environment variables to restrict other libraries to 1 thread
@@ -27,20 +28,29 @@ print(f"PyTorch using {torch.get_num_threads()} threads.")
 
 def profile_model(model: YOLOSegPlusPlus,
                   device: str = "gpu",
-                  calculate_logits: bool = False,
                   ) -> None:
     model.to(device)
     model.eval()
+    torch.backends.mkldnn.enabled = True
+
+    for m in model.modules():
+        if isinstance(m, nn.Sequential):
+            for i in range(len(m) - 1):
+                if isinstance(m[i], nn.Conv2d) and isinstance(m[i + 1], nn.BatchNorm2d):
+                    fused = torch.nn.utils.fuse_conv_bn_eval(m[i], m[i + 1])
+                    m[i] = fused
+                    m[i + 1] = nn.Identity()
 
     dummy_data = torch.randn(128, 4, 160, 160).to(device)
 
     if device == "cpu":
         with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
             with record_function("model_inference"):
-                # model.inference(dummy_data)
-                model.yolo(dummy_data)
+                model.inference(dummy_data)
+                # model.yolo(dummy_data)
         print(prof.key_averages().table(
             sort_by="cpu_time_total", row_limit=10))
+
         # else:
         #     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
         #         with record_function("model_inference"):
@@ -74,20 +84,21 @@ def profile_model(model: YOLOSegPlusPlus,
 
             sys.exit(0)
 
-        sort_by_keyword = device + "_time_total"
+            sort_by_keyword = device + "_time_total"
 
-        with profile(activities=activities, record_shapes=True) as prof:
-            with record_function("model_inference"):
-                model(inputs)
+            with profile(activities=activities, record_shapes=True) as prof:
+                with record_function("model_inference"):
+                    model(dummy_data)
 
-        print(prof.key_averages().table(sort_by=sort_by_keyword, row_limit=10))
+                print(prof.key_averages().table(
+                    sort_by=sort_by_keyword, row_limit=10))
 
 
 if __name__ == "__main__":
     # Create predictor and load checkpoint
     p_args = dict(model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
                   data=f"data/data.yaml",
-                  verbose=True,
+                  verbose=False,
                   imgsz=160,
                   save=False)
 
@@ -102,5 +113,4 @@ if __name__ == "__main__":
 
     # Profile model
     profile_model(model=model,
-                  device="cpu",
-                  calculate_logits=True)
+                  device="cpu")

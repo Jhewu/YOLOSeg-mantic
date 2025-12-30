@@ -154,51 +154,61 @@ class YOLOSegPlusPlus(Module):
         self.yolo.eval()
         self.encoder = self.yolo.model[:5]
 
-        self.upsample = Upsample(
+        self.bilinear = Upsample(
             scale_factor=2, mode="bilinear", align_corners=False)
+        self.nearest = Upsample(
+            scale_factor=2, mode="nearest")
 
         # ---Decoder Body---
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
+                # SingleLightConv(128, 96)
+                # LightConv(128, 96)
                 # C3Ghost(128+1, 96, n=1),
-                C3Ghost(128, 96, n=1),
+                C3Ghost(128, 64, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
-                self.upsample,
+                self.nearest,
+                # self.bilinear,
                 # SingleLightConv(96, 64),
+                # LightConv(96, 64),
                 # ECA(),
 
                 # ---PREVIOUS---
-                DoubleLightConv(96, 64),
+                DoubleLightConv(64, 32),
                 # ---PREVIOUS---
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64+64, 64),
+                C3Ghost(32, 32),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
-                self.upsample,
+                self.nearest,
+                # self.bilinear,
 
-                # SingleLightConv(64, 32),
+                SingleLightConv(32, 16),
+                # LightConv(64, 32),
                 # ECA(),
 
                 # ---PREVIOUS---
-                DoubleLightConv(64, 32)
+                # DoubleLightConv(64, 32)
                 # ---PREVIOUS---
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
-                self.upsample,
+                # self.nearest,
+                self.bilinear,
 
-                SingleLightConv(32, 16),
-                ECA(),
+                SingleLightConv(16, 8),
+                # LightConv(32, 16),
+                # ECA(),
 
                 # ---PREVIOUS---
-                # DoubleLightConv(32, 16)
+                # DoubleLightConv(16, 8)
                 # ---PREVIOUS---
             ),
         ])
-        self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1)
+        self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
 
         # ---Miscellaneous Section---
         self.verbose = verbose
@@ -208,14 +218,14 @@ class YOLOSegPlusPlus(Module):
         self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
         self.decoder_skip_idx = {2}
 
-        if torch.cuda.is_available() and training:
-            print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
-                0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
-        else:
-            print(
-                f"\nATTENTION: CUDA is not available (CPU) or eval() using forward hooks to save on compute...\n")
-            self.activation_cache = deque(maxlen=3)
-            self._assign_hooks()
+        # if torch.cuda.is_available() and training:
+        #     print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
+        #         0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
+        # else:
+        #     print(
+        #         f"\nATTENTION: CUDA is not available (CPU) or eval() using forward hooks to save on compute...\n")
+        #     self.activation_cache = deque(maxlen=3)
+        #     self._assign_hooks()
 
     def _hook_fn(self, module, input, output):
         """
@@ -279,7 +289,8 @@ class YOLOSegPlusPlus(Module):
             for idx, module in enumerate(self.decoder):
                 if idx in self.decoder_skip_idx:
                     skip = features[i]
-                    x = torch.concat([x, skip], dim=1)
+                    # x = torch.concat([x, skip], dim=1)
+                    # x = x * (skip + 1)
                     i -= 1
                 x = module(x)
             out = self.output(x)

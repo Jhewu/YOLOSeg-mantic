@@ -1,4 +1,3 @@
-from typing import List
 from ultralytics.nn.modules import C3Ghost, DWConv, C2f, DWConvTranspose2d, Conv, C3k2, ConvTranspose, CBAM, LightConv
 
 # local/custom scripts
@@ -149,7 +148,6 @@ class YOLOSegPlusPlus(Module):
 
         super().__init__()
         # ---YOLO predictor and backbone---
-        self.yolo = predictor.model.model
         self.yolo = predictor.model
         for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
@@ -262,16 +260,14 @@ class YOLOSegPlusPlus(Module):
 
         with torch.no_grad():
             # ---YOLO detect forward---
-            x = self.yolo(x)
-            detect_branch, cls_branch = x
-            twenty, ten, five = cls_branch  # <- Resolution-wise
-            logits = twenty[:, -1:]
+            x, features, logits = self.yolo.predict(
+                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
             # ---YOLO detect forward---
 
-            i = len(self.activation_cache) - 1  # <- Start from last index
+            i = -1  # <- Start from last index
 
             # ---Decoder "Semantic Bottleneck"---
-            skip = self.activation_cache[i]
+            skip = features[i]
 
             # x = (skip * logits) + skip
             x = skip * (logits + 1)
@@ -282,13 +278,12 @@ class YOLOSegPlusPlus(Module):
             # ---Decoder Body---
             for idx, module in enumerate(self.decoder):
                 if idx in self.decoder_skip_idx:
-                    skip = self.activation_cache[i]
+                    skip = features[i]
                     x = torch.concat([x, skip], dim=1)
                     i -= 1
                 x = module(x)
             out = self.output(x)
             # ---Decoder Body---
-        self.activation_cache.clear()
         return out
 
     def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor:

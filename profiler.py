@@ -1,6 +1,7 @@
 # Local
 from YOLOSegPlusPlus import YOLOSegPlusPlus
 from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
+from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
 # Internal Lib
@@ -36,7 +37,8 @@ def profile_model(model: YOLOSegPlusPlus,
     if device == "cpu":
         with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
             with record_function("model_inference"):
-                model.inference(dummy_data)
+                # model.inference(dummy_data)
+                model.yolo(dummy_data)
         print(prof.key_averages().table(
             sort_by="cpu_time_total", row_limit=10))
         # else:
@@ -89,11 +91,13 @@ if __name__ == "__main__":
                   imgsz=160,
                   save=False)
 
-    YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
-    YOLO_predictor.setup_model(p_args["model"])
+    # YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
+    # YOLO_predictor.setup_model(p_args["model"])
+    YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
+    YOLO_trainer.setup_model()
 
     # Create model instance
-    model = YOLOSegPlusPlus(predictor=YOLO_predictor,
+    model = YOLOSegPlusPlus(predictor=YOLO_trainer,
                             training=False)
 
     # Profile model

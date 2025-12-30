@@ -127,12 +127,17 @@ class CustomBaseModel(BaseModel):
     def predict(self, x, profile=False, visualize=False, augment=False, embed=None, return_features=False, seg_features_idxs={2, 4}):
         """Perform a forward pass through the network.
 
+        JUN MODIFICATION: Added two extra parameters return features and seg_features_idxs
+        for explicit tensor returns (faster run-time for YOLOSeg++)
+
         Args:
             x (torch.Tensor): The input tensor to the model.
             profile (bool): Print the computation time of each layer if True.
             visualize (bool): Save the feature maps of the model if True.
             augment (bool): Augment image during prediction.
             embed (list, optional): A list of feature vectors/embeddings to return.
+            return_features (bool): If True, returns tensors at seg_features_idxs for fast YOLOSeg++ inference
+            seg_features_idxs (set): A set containing the idxs of YOLO Detect model tensors for fast YOLOSeg++ inference
 
         Returns:
             (torch.Tensor): The last output of the model.
@@ -145,18 +150,25 @@ class CustomBaseModel(BaseModel):
                       return_features=False, seg_features_idxs={2, 4}):
         """Perform a forward pass through the network.
 
+        JUN MODIFICATION: Added two extra parameters return features and seg_features_idxs
+        for explicit tensor returns (faster run-time for YOLOSeg++)
+
         Args:
             x (torch.Tensor): The input tensor to the model.
             profile (bool): Print the computation time of each layer if True.
             visualize (bool): Save the feature maps of the model if True.
             embed (list, optional): A list of feature vectors/embeddings to return.
+            return_features (bool): If True, returns tensors at seg_features_idxs for fast YOLOSeg++ inference
+            seg_features_idxs (set): A set containing the idxs of YOLO Detect model tensors for fast YOLOSeg++ inference
 
         Returns:
             (torch.Tensor): The last output of the model.
         """
         y, dt, embeddings = [], [], []  # outputs
 
-        features = []  # JUN MODIFICATION
+        # ------JUN MODIFICATION------
+        features = []
+        # ------JUN MODIFICATION------
 
         embed = frozenset(embed) if embed is not None else {-1}
         max_idx = max(embed)
@@ -169,9 +181,10 @@ class CustomBaseModel(BaseModel):
             x = m(x)  # run
             y.append(x if m.i in self.save else None)  # save output
 
-            # JUN MODIFICATION: Explicit feature capture
+            # ------JUN MODIFICATION------
             if return_features and m.i in seg_features_idxs:
-                print(m.i)
+                features.append(x)
+            # ------JUN MODIFICATION------
 
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
@@ -180,17 +193,13 @@ class CustomBaseModel(BaseModel):
                     x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
                 if m.i == max_idx:
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
-        # JUN MODIFICATION
+
+        # ------JUN MODIFICATION------
         logits = None
         if return_features:
-            # detect_branch, cls_branch = x
-            # twenty, ten, five = cls_branch  # <- Resolution-wise
-            # logits = twenty[:, -1:]
-            print(x)
-            # logits = x[0][0][:, -1:]
-
-        if return_features:
+            logits = x[1][0][:, -1:]
             return x, features, logits
+        # ------JUN MODIFICATION------
 
         return x
 

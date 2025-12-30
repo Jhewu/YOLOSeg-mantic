@@ -575,7 +575,11 @@ if __name__ == "__main__":
     item = YOLO_trainer.model.predict(
         x, return_features=True, seg_features_idxs={2, 4})
 
-    print(len(item))
+    x, features, logits = item
+
+    print(len(x))
+    print(len(features))
+    print(logits.shape)
 
     # YOLO_trainer.model._predict_once(x)
 

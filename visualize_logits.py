@@ -82,7 +82,7 @@ def test_predictor():
     x = model(x)
 
     detect_branch, cls_branch = x
-    a, b, c = cls_branch
+    twenty, ten, five = cls_branch
 
     """SPLIT CHANNELS
     B, G, R, A = cv2.split(x)
@@ -95,17 +95,16 @@ def test_predictor():
         success = cv2.imwrite(filename, channel)
     """
 
-    heatmap = a[:, -1:]
-    heatmap = torch.sigmoid(heatmap)
+    logits = twenty[:, -1:]
+    logits = torch.sigmoid(logits)
     confidence = argmax_conf(detect_branch)
-    space_confidence = spatial_confidence(heatmap)
+    space_confidence = spatial_confidence(logits)
 
     print(confidence, space_confidence)
     plt.imshow(heatmap.squeeze(0).squeeze(0).cpu().numpy())
     plt.show()
 
-
-def test_trainer1():
+def test_trainer():
     """
     Visualize logits using the YOLO Trainer custom class
     """
@@ -122,59 +121,14 @@ def test_trainer1():
     YOLO_trainer.setup_model()
 
     x = cv2.imread("archive/BraTS-SSA-00041-0007-t1c_image.png",
-                   cv2.IMREAD_UNCHANGED)
+                   cv2.IMREAD_UNCHANGED) # Emtpy
     # x = cv2.imread("/home/jun/Desktop/inspirit/YOLOSeg++/archive/BraTS-SSA-00002-00030-t1c_image.png",
-    # cv2.IMREAD_UNCHANGED)
+    # cv2.IMREAD_UNCHANGED) # With Tumor
 
     x = transforms.ToTensor()(x)
     x = transforms.Resize(size=(160, 160))(x)
     x = x.to("cuda")
     x = x.unsqueeze(0)
-
-    # x = torch.zeros(1, 4, 160, 160).to('cuda')
-
-    model = YOLO_trainer.model
-    model.to("cuda")
-    # model.eval()
-
-    x = model.predict(x)
-    # detect_branch, cls_branch = x
-    twenty, ten, five = x
-    logits = twenty[:, -1:]
-    logits = torch.sigmoid(logits)
-
-    plt.imshow(logits.squeeze(0).squeeze(0).cpu().detach().numpy())
-    # plt.imshow(logits.squeeze(0).squeeze(0).cpu().detach().numpy())
-    plt.show()
-
-
-def test_trainer2():
-    """
-    Visualize logits using the YOLO Trainer custom class
-    """
-
-    # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
-                  data=f"data/data.yaml",
-                  verbose=True,
-                  imgsz=160,
-                  save=False)
-
-    # Create trainer and Load checkpoint
-    YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
-    YOLO_trainer.setup_model()
-
-    x = cv2.imread("archive/BraTS-SSA-00041-0007-t1c_image.png",
-                   cv2.IMREAD_UNCHANGED)
-    # x = cv2.imread("/home/jun/Desktop/inspirit/YOLOSeg++/archive/BraTS-SSA-00002-00030-t1c_image.png",
-    # cv2.IMREAD_UNCHANGED)
-
-    x = transforms.ToTensor()(x)
-    x = transforms.Resize(size=(160, 160))(x)
-    x = x.to("cuda")
-    x = x.unsqueeze(0)
-
-    # x = torch.zeros(1, 4, 160, 160).to('cuda')
 
     model = YOLO_trainer.model
     model.to("cuda")
@@ -186,12 +140,15 @@ def test_trainer2():
     logits = twenty[:, -1:]
     logits = torch.sigmoid(logits)
 
+    confidence = argmax_conf(detect_branch)
+    space_confidence = spatial_confidence(logits)
+
+    print(confidence, space_confidence)
+
     plt.imshow(logits.squeeze(0).squeeze(
         0).cpu().detach().numpy())
     plt.show()
 
-
 if __name__ == "__main__":
-    test_trainer2()
-    test_trainer1()
+    test_trainer()
     # test_predictor()

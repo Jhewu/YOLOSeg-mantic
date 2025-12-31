@@ -1,5 +1,4 @@
 from YOLOSegPlusPlus import YOLOSegPlusPlus
-from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
@@ -217,6 +216,7 @@ class Trainer:
         # Add model to device
         self.model.to(self.device)
         self.model.train()
+        self.model.yolo.eval()
 
         # Creates the dataloader
         train_dataloader, val_dataloader = self.create_dataloader(
@@ -266,7 +266,7 @@ class Trainer:
 
         patience = 0  # --> local patience for early stopping
         for epoch in tqdm(range(self.epochs)):
-            self.model.train()
+            # self.model.train()
             self.dice_metric.reset()
 
             train_start_time = time.time()
@@ -280,6 +280,8 @@ class Trainer:
                     optimizer.zero_grad()
                     with torch.amp.autocast(device_type=self.device):
                         pred = self.model(img, heatmaps)
+                        # pred = self.model.inference(img)
+
                         loss = self.loss(pred, mask)
 
                     if torch.isnan(loss):
@@ -322,6 +324,8 @@ class Trainer:
 
                     optimizer.zero_grad()
                     pred = self.model(img, heatmaps)
+                    # pred = self.model.inference(img)
+
                     loss = self.loss(pred, mask)
 
                     train_running_loss += loss.item()
@@ -353,6 +357,7 @@ class Trainer:
                     heatmaps = img_mask_heatmap[2].float().to(self.device)
 
                     pred = self.model(img, heatmaps)
+                    # pred = self.model.inference(img)
                     loss = self.loss(pred, mask)
 
                     # Accumulate Loss and Metrics
@@ -559,52 +564,33 @@ if __name__ == "__main__":
                   save=False)
 
     # Create predictor and Load checkpoint
-    # YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
     YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
-
     YOLO_trainer.setup_model()
-    # YOLO_predictor.setup_model(p_args["model"])
-    # modify_YOLO(YOLO_predictor)
 
-    # Create YOLOU instance
+    # Create YOLOSeg++ Instance
     model = YOLOSegPlusPlus(predictor=YOLO_trainer)
 
-    x = torch.zeros(1, 4, 160, 160)
+    trainable_count = count_parameters(model, only_trainable=True)
+    all_counts = count_parameters(model, only_trainable=False)
 
-    # YOLO_trainer.model.predict(x)
-    item = YOLO_trainer.model.predict(
-        x, return_features=True, seg_features_idxs={2, 4})
+    print(f"Total Trainable Parameters: {trainable_count:,}")
+    print(f"Total All Parameters (Trainable + Fixed): {all_counts[1]:,}")
+    print("-" * 30)
 
-    x, features, logits = item
+    trainer = Trainer(model=model,
+                      data_path="data/stacked_segmentation",
+                      model_path=None,
+                      load_and_train=False,
+                      mixed_precision=True,
 
-    print(len(x))
-    print(len(features))
-    print(logits.shape)
+                      epochs=75,
+                      image_size=160,
+                      batch_size=128,
+                      lr=1e-4,
 
-    # YOLO_trainer.model._predict_once(x)
-
-
-#     trainable_count = count_parameters(model, only_trainable=True)
-#     all_counts = count_parameters(model, only_trainable=False)
-#
-#     print(f"Total Trainable Parameters: {trainable_count:,}")
-#     print(f"Total All Parameters (Trainable + Fixed): {all_counts[1]:,}")
-#     print("-" * 30)
-#
-#     trainer = Trainer(model=model,
-#                       data_path="data/stacked_segmentation",
-#                       model_path=None,
-#                       load_and_train=False,
-#                       mixed_precision=True,
-#
-#                       epochs=75,
-#                       image_size=160,
-#                       batch_size=128,
-#                       lr=1e-4,
-#
-#                       early_stopping=True,
-#                       early_stopping_start=50,
-#                       patience=10,
-#                       device="cuda"
-#                       )
-#     trainer.train()
+                      early_stopping=True,
+                      early_stopping_start=50,
+                      patience=10,
+                      device="cuda"
+                      )
+    trainer.train()

@@ -28,28 +28,51 @@ print(f"PyTorch using {torch.get_num_threads()} threads.")
 
 def profile_model(model: YOLOSegPlusPlus,
                   device: str = "gpu",
+                  iterations: int = 1,
+                  batch: int = 1,
+                  warm_ups: bool = False,
                   ) -> None:
     model.to(device)
     model.eval()
-    torch.backends.mkldnn.enabled = True
 
-    for m in model.modules():
-        if isinstance(m, nn.Sequential):
-            for i in range(len(m) - 1):
-                if isinstance(m[i], nn.Conv2d) and isinstance(m[i + 1], nn.BatchNorm2d):
-                    fused = torch.nn.utils.fuse_conv_bn_eval(m[i], m[i + 1])
-                    m[i] = fused
-                    m[i + 1] = nn.Identity()
-
-    dummy_data = torch.randn(128, 4, 160, 160).to(device)
+    dummy_data = torch.randn(batch, 4, 160, 160).to(device)
 
     if device == "cpu":
+        # Optional Warm-up
+        if warm_ups:
+            for _ in range(2):
+                model.inference(dummy_data)
         with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
             with record_function("model_inference"):
-                model.inference(dummy_data)
-                # model.yolo(dummy_data)
+                for _ in range(iterations):
+                    model.inference(dummy_data)
+
+                    # ---YOLO Detect---
+                    # model.yolo(dummy_data)
+                    # ---YOLO Detect---
+
+        # Get the key averages
+        key_avg = prof.key_averages()
+
+        # Calculate total CPU time from all operations
+        total_cpu_time = sum([item.self_cpu_time_total for item in key_avg])
+        avg_time_per_iteration = total_cpu_time / iterations
+
+        print(f"--- Results averaged over {iterations} iterations ---")
+        print(f"Total CPU time: {total_cpu_time / 1e6:.2f}")
+        print(f"Average time per iteration: {
+              avg_time_per_iteration / 1e6:.2f}")
+        print("\nPer-operation breakdown:")
         print(prof.key_averages().table(
-            sort_by="cpu_time_total", row_limit=10))
+            sort_by="cpu_time_total",
+            row_limit=10
+        ))
+
+        # print(f"--- Results averaged over {iterations} iterations ---")
+        # print(prof.key_averages().table(
+        #     sort_by="cpu_time_total",
+        #     row_limit=10
+        # ))
 
         # else:
         #     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
@@ -113,4 +136,7 @@ if __name__ == "__main__":
 
     # Profile model
     profile_model(model=model,
-                  device="cpu")
+                  device="cpu",
+                  iterations=3,
+                  warm_ups=True,
+                  batch=128)

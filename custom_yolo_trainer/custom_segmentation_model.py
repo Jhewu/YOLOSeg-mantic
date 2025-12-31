@@ -111,7 +111,11 @@ class CustomBaseModel(BaseModel):
         # ------JUN MODIFICATION------
         logits = None
         if return_features:
-            logits = x[1][0][:, -1:]
+            detect_branch, cls_branch = x
+            twenty, ten, five = cls_branch
+            logits = twenty[:, -1:]
+
+            # logits = x[1][0][:, -1:]
             return x, features, logits
         # ------JUN MODIFICATION------
 

@@ -1,3 +1,4 @@
+
 from ultralytics.nn.modules import C3Ghost, DWConv, C2f, DWConvTranspose2d, Conv, C3k2, ConvTranspose, CBAM, LightConv
 
 # local/custom scripts
@@ -176,11 +177,11 @@ class YOLOSegPlusPlus(Module):
                 # ECA(),
 
                 # ---PREVIOUS---
-                DoubleLightConv(64, 32),
+                DoubleLightConv(64, 64),
                 # ---PREVIOUS---
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(32, 32),
+                C3Ghost(64, 32),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
@@ -290,7 +291,7 @@ class YOLOSegPlusPlus(Module):
                 if idx in self.decoder_skip_idx:
                     skip = features[i]
                     # x = torch.concat([x, skip], dim=1)
-                    # x = x * (skip + 1)
+                    x = x * (skip + 1)
                     i -= 1
                 x = module(x)
             out = self.output(x)
@@ -310,6 +311,36 @@ class YOLOSegPlusPlus(Module):
         Returns:
             x (torch.tensor): Output tensor [B, 1, H, W]
         """
+        with torch.no_grad():
+            # ---YOLO detect forward---
+            x, features, logits = self.yolo.predict(
+                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
+            # ---YOLO detect forward---
+
+        i = -1  # <- Start from last index
+
+        # ---Decoder "Semantic Bottleneck"---
+        skip = features[i]
+
+        # x = (skip * logits) + skip
+        x = skip * (logits + 1)
+
+        i -= 1
+        # ---Decoder "Semantic Bottleneck"---
+
+        # ---Decoder Body---
+        for idx, module in enumerate(self.decoder):
+            if idx in self.decoder_skip_idx:
+                skip = features[i]
+                # x = torch.concat([x, skip], dim=1)
+                x = x * (skip + 1)
+                i -= 1
+            x = module(x)
+        out = self.output(x)
+        # ---Decoder Body---
+        return out
+
+        """    
         # ---Encoder (weights frozen in training loop)---
         skip_connections = []
         for idx, module in enumerate(self.encoder):
@@ -345,3 +376,4 @@ class YOLOSegPlusPlus(Module):
             x = module(x)
         out = self.output(x)
         return out
+        """

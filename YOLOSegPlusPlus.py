@@ -1,6 +1,5 @@
 # Local
-from custom_yolo_predictor.custom_detseg_predictor import CustomDetectionPredictor
-
+from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 
 # External libs
 import torch
@@ -22,25 +21,37 @@ class BoundaryRefinementModule(nn.Module):
 
         # Edge detection path (learns to detect boundaries)
         # Uses depthwise separable conv for efficiency
+#         self.edge_detector = nn.Sequential(
+#             # Depthwise: detects spatial patterns per channel
+#             nn.Conv2d(in_channels, in_channels, 3,
+#                       padding=1, groups=in_channels),
+#             nn.BatchNorm2d(in_channels),
+#             nn.ReLU(inplace=True),
+# 
+#             # Pointwise: combines channel info for edge map
+#             nn.Conv2d(in_channels, in_channels, 1),
+#             nn.BatchNorm2d(in_channels),
+#             nn.Sigmoid()  # Produces edge attention map [0, 1]
+#         )
         self.edge_detector = nn.Sequential(
-            # Depthwise: detects spatial patterns per channel
-            nn.Conv2d(in_channels, in_channels, 3,
-                      padding=1, groups=in_channels),
+            # Depthwise only (Spatial only)
+            nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels, bias=False),
             nn.BatchNorm2d(in_channels),
-            nn.ReLU(inplace=True),
-
-            # Pointwise: combines channel info for edge map
-            nn.Conv2d(in_channels, in_channels, 1),
-            nn.BatchNorm2d(in_channels),
-            nn.Sigmoid()  # Produces edge attention map [0, 1]
+            # HardSigmoid is much faster on CPU than standard Sigmoid
+            nn.Hardsigmoid(inplace=True) 
         )
 
         # Feature refinement path
+        # self.refine_conv = nn.Sequential(
+        #     nn.Conv2d(in_channels, in_channels, 3, padding=1),
+        #     nn.BatchNorm2d(in_channels),
+        #     nn.ReLU(inplace=True)
+        # )
         self.refine_conv = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, 3, padding=1),
-            nn.BatchNorm2d(in_channels),
-            nn.ReLU(inplace=True)
-        )
+                    nn.Conv2d(in_channels, in_channels, 1, bias=False),
+                    nn.BatchNorm2d(in_channels),
+                    nn.ReLU(inplace=True)
+                )
 
     def forward(self, x):
         """
@@ -196,7 +207,8 @@ class ECA(Module):
 
 class YOLOSegPlusPlus(Module):
     def __init__(self,
-                 predictor: CustomDetectionPredictor,
+                 predictor: CustomSegmentationTrainer,
+                 refinement: str = "basic",
                  training: bool = True,
                  verbose: bool = False):
         """
@@ -238,12 +250,11 @@ class YOLOSegPlusPlus(Module):
         self.yolo.eval()
         self.encoder = self.yolo.model[:5]
 
+        # ---Decoder Body---
         self.bilinear = Upsample(
             scale_factor=2, mode="bilinear", align_corners=False)
         self.nearest = Upsample(
             scale_factor=2, mode="nearest")
-
-        # ---Decoder Body---
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
                 C3Ghost(128, 64, n=1),
@@ -268,6 +279,20 @@ class YOLOSegPlusPlus(Module):
             ),
         ])
         self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
+        
+        # ---Auxiliary Output Heads Section---
+        self.aux_out = nn.ModuleList([
+            nn.Conv2d(16, 1, kernel_size=1),
+            nn.Conv2d(8, 1, kernel_size=1)
+        ])
+
+        # ---Boundary Refinement Section---
+        if refinement == "basic":
+            self.boundary_refine = BoundaryRefinementModule(8)
+        elif refinement == "advanced":
+            self.boundary_refine = AdvancedBoundaryRefinement(8)
+        else:
+            self.boundary_refine = None
 
         # ---Miscellaneous Section---
         self.verbose = verbose
@@ -277,6 +302,7 @@ class YOLOSegPlusPlus(Module):
         # self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
         self.encoder_skip_idx = {0, 1, 2, 4}
         self.decoder_skip_idx = {2, 3, 4}
+        self.aux_decoder_idx = {3, 4}  # Example indices
 
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
@@ -294,7 +320,7 @@ class YOLOSegPlusPlus(Module):
             out = self.forward(x)
         return out
 
-    def forward(self, x: torch.tensor) -> torch.tensor:
+    def forward(self, x: torch.tensor, return_aux=False) -> torch.tensor:
         """
         Training ONLY forward step for YOLOSeg++
         YOLO logits are precomputed to reduce training time (check generate_objectmaps.py)
@@ -307,31 +333,37 @@ class YOLOSegPlusPlus(Module):
         Returns:
             x (torch.tensor): Output tensor [B, 1, H, W]
         """
+        # ---YOLO detect forward---
         with torch.no_grad():
-            # ---YOLO detect forward---
             x, features, logits = self.yolo.predict(
                 x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
-            # ---YOLO detect forward---
 
         i = -1  # <- Start from last index
 
         # ---Decoder "Semantic Bottleneck"---
         skip = torch.sigmoid(features[i])
-
-        # x = (skip * logits) + skip
         x = skip * (logits + 1)
-
         i -= 1
-        # ---Decoder "Semantic Bottleneck"---
 
         # ---Decoder Body---
+        aux_out, aux_idx = [], 0
         for idx, module in enumerate(self.decoder):
             if idx in self.decoder_skip_idx:
                 skip = features[i]
-                # x = torch.concat([x, skip], dim=1)
                 x = x * (skip + 1)
                 i -= 1
             x = module(x)
+            # ---Aux Output (Deep Supervision)---
+            if return_aux and idx in self.aux_decoder_idx:
+                aux_pred = self.aux_out[aux_idx](x)
+                aux_out.append(aux_pred)
+                aux_idx += 1
+
+        # -- Boundary Refinement ---
+        if self.boundary_refine:
+            x = self.boundary_refine(x)
+
         out = self.output(x)
-        # ---Decoder Body---
+        if return_aux:
+            return out, aux_out
         return out

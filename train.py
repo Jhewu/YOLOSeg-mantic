@@ -187,18 +187,14 @@ class Trainer:
         train_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/train",
-            objectmap_path="objectmap/train",
             mask_path="masks/train",
-            image_size=self.image_size,
-            objectmap_sizes=[20])
+            image_size=self.image_size)
 
         val_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/val",
-            objectmap_path="objectmap/val",
             mask_path="masks/val",
-            image_size=self.image_size,
-            objectmap_sizes=[20])
+            image_size=self.image_size)
 
         train_dataloader = DataLoader(dataset=train_dataset,
                                       batch_size=self.batch_size,
@@ -273,9 +269,9 @@ class Trainer:
             train_running_loss = 0
 
             if self.mixed_precision:
-                for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(train_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
                     optimizer.zero_grad()
                     with torch.amp.autocast(device_type=self.device):
                         pred = self.model(img)
@@ -314,9 +310,9 @@ class Trainer:
                     self.dice_metric(pred_binary, mask)
 
             else:
-                for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(train_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
 
                     optimizer.zero_grad()
                     pred = self.model(img)
@@ -345,9 +341,9 @@ class Trainer:
             val_start_time = time.time()
             self.model.eval()
             with torch.no_grad():
-                for idx, img_mask_heatmap in enumerate(tqdm(val_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(val_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
 
                     pred = self.model(img)
                     loss = self.loss(pred, mask)

@@ -203,28 +203,15 @@ class YOLOSegPlusPlus(Module):
         WARNING: DOCUMENTATION NOT UPDATED
 
         Creates a YOLOSeg++ Network with Pretrained YOLOv12 (detection) model
-        Main Idea: Using YOLOv12 bbox as guidance in UNet skip connections and recycling YOLOv12 backbone as the encoder
 
         Args: 
-            predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor allowing 4-channels
+            WORK IN PROGRESS
 
         Attributes: 
-            yolo_predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor instance  
-            encoder (nn.Sequential): Encoder portion extracted from YOLOv12-Seg backbone (first 9 layers)
-            decoder (nn.Sequential): Decoder portion constructed from encoder modules
-            bottleneck (nn.Sequential): First bottleneck layer with BottleneckCSP block
+            WORK IN PROGRESS
 
         Methods: 
-            _hook_fn: Forward hook function for caching activations (mainly used for YOLOv12-Seg forward pass)
-            _assign_hooks: Registers forward hooks on specified modules
-            _create_concat_block: Creates concatenation blocks for skip connections
-            YOLO_forward: Performs YOLOv12-Seg forward pass to generate initial masks
-            _STN_forward: Applies spatial transformer network for affine transformation
-            forward: Main forward pass implementation
-            _reverse_module_channels: Converts encoder modules to decoder-compatible modules
-            _construct_decoder_from_encoder: Builds decoder from encoder modules
-            check_encoder_decoder_symmetry: Utility method to verify encoder-decoder symmetry
-            print_yolo_named_modules: Debug utility to print all YOLO modules
+            WORK IN PROGRESS
 
         -------------------------------------------------------------------------------------------------------------
         YOLOv12 backbone
@@ -288,18 +275,8 @@ class YOLOSegPlusPlus(Module):
         # ---Indices---
         self.upsample_idx = {2, 5, 6}
         # self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
-        # <- Must be at respective resolution
         self.encoder_skip_idx = {0, 1, 2, 4}
         self.decoder_skip_idx = {2, 3, 4}
-
-        # if torch.cuda.is_available() and training:
-        #     print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
-        #         0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
-        # else:
-        #     print(
-        #         f"\nATTENTION: CUDA is not available (CPU) or eval() using forward hooks to save on compute...\n")
-        #     self.activation_cache = deque(maxlen=3)
-        #     self._assign_hooks()
 
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
@@ -314,35 +291,10 @@ class YOLOSegPlusPlus(Module):
         """
 
         with torch.no_grad():
-            # ---YOLO detect forward---
-            x, features, logits = self.yolo.predict(
-                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
-            # ---YOLO detect forward---
-
-            i = -1  # <- Start from last index
-
-            # ---Decoder "Semantic Bottleneck"---
-            skip = features[i]
-
-            # x = (skip * logits) + skip
-            x = skip * (logits + 1)
-
-            i -= 1
-            # ---Decoder "Semantic Bottleneck"---
-
-            # ---Decoder Body---
-            for idx, module in enumerate(self.decoder):
-                if idx in self.decoder_skip_idx:
-                    skip = features[i]
-                    # x = torch.concat([x, skip], dim=1)
-                    x = x * (skip + 1)
-                    i -= 1
-                x = module(x)
-            out = self.output(x)
-            # ---Decoder Body---
+            out = self.forward(x)
         return out
 
-    def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor:
+    def forward(self, x: torch.tensor) -> torch.tensor:
         """
         Training ONLY forward step for YOLOSeg++
         YOLO logits are precomputed to reduce training time (check generate_objectmaps.py)

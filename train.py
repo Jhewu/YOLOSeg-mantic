@@ -276,12 +276,9 @@ class Trainer:
                 for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
                     img = img_mask_heatmap[0].float().to(self.device)
                     mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
                     optimizer.zero_grad()
                     with torch.amp.autocast(device_type=self.device):
-                        pred = self.model(img, heatmaps)
-                        # pred = self.model.inference(img)
-
+                        pred = self.model(img)
                         loss = self.loss(pred, mask)
 
                     if torch.isnan(loss):
@@ -320,12 +317,9 @@ class Trainer:
                 for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
                     img = img_mask_heatmap[0].float().to(self.device)
                     mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
 
                     optimizer.zero_grad()
-                    pred = self.model(img, heatmaps)
-                    # pred = self.model.inference(img)
-
+                    pred = self.model(img)
                     loss = self.loss(pred, mask)
 
                     train_running_loss += loss.item()
@@ -354,10 +348,8 @@ class Trainer:
                 for idx, img_mask_heatmap in enumerate(tqdm(val_dataloader)):
                     img = img_mask_heatmap[0].float().to(self.device)
                     mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
 
-                    pred = self.model(img, heatmaps)
-                    # pred = self.model.inference(img)
+                    pred = self.model(img)
                     loss = self.loss(pred, mask)
 
                     # Accumulate Loss and Metrics

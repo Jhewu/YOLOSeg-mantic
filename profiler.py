@@ -119,11 +119,12 @@ def profile_model(model: YOLOSegPlusPlus,
 
 if __name__ == "__main__":
     # Create predictor and load checkpoint
-    p_args = dict(model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
-                  data=f"data/data.yaml",
-                  verbose=False,
-                  imgsz=160,
-                  save=False)
+    p_args = dict(
+        model="pretrained_detect_yolo/yolo12n_det_best/weights/best.pt",
+        data=f"data/data.yaml",
+        verbose=False,
+        imgsz=160,
+        save=False)
 
     # YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
     # YOLO_predictor.setup_model(p_args["model"])
@@ -139,4 +140,4 @@ if __name__ == "__main__":
                   device="cpu",
                   iterations=3,
                   warm_ups=True,
-                  batch=128)
+                  batch=1)

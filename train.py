@@ -62,23 +62,23 @@ class Trainer:
         self.model_path = model_path
 
         # ------PREVIOUS LOSS------
-        self.loss = DiceLoss(
-            include_background=False,  # single class
-            to_onehot_y=False,         # single class
-            sigmoid=True,
-            soft_label=True,          # should improve convergence
-            batch=True,               # should improve stability during training
-            reduction="mean")
+        # self.loss = DiceLoss(
+        #     include_background=False,  # single class
+        #     to_onehot_y=False,         # single class
+        #     sigmoid=True,
+        #     soft_label=True,          # should improve convergence
+        #     batch=True,               # should improve stability during training
+        #     reduction="mean")
         # ------PREVIOUS LOSS------
 
         # -----NEW LOSS-----
-        # self.loss = DiceCELoss(
-        #     include_background = False, # Single class
-        #     to_onehot_y = False,
-        #     sigmoid = True,
-        #     reduction = "mean",
-        #     batch = True,
-        # )
+        self.loss = DiceCELoss(
+            include_background=False,  # Single class
+            to_onehot_y=False,
+            sigmoid=True,
+            reduction="mean",
+            batch=True,
+        )
         # -----NEW LOSS-----
 
         self.dice_metric = DiceMetric(

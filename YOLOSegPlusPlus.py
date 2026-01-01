@@ -1,18 +1,114 @@
-
-from ultralytics.nn.modules import C3Ghost, DWConv, C2f, DWConvTranspose2d, Conv, C3k2, ConvTranspose, CBAM, LightConv
-
-# local/custom scripts
+# Local
 from custom_yolo_predictor.custom_detseg_predictor import CustomDetectionPredictor
-
-# Internal Libs
-from collections import deque
 
 
 # External libs
 import torch
 import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
-import torch.nn.functional as F
+from ultralytics.nn.modules import C3Ghost, LightConv
+
+
+class BoundaryRefinementModule(nn.Module):
+    """
+    Refines segmentation boundaries using edge-aware feature enhancement
+
+    Key Insight: HD95 errors occur at boundaries where predictions are uncertain.
+    This module detects boundaries and sharpens features in those regions.
+    """
+
+    def __init__(self, in_channels):
+        super().__init__()
+
+        # Edge detection path (learns to detect boundaries)
+        # Uses depthwise separable conv for efficiency
+        self.edge_detector = nn.Sequential(
+            # Depthwise: detects spatial patterns per channel
+            nn.Conv2d(in_channels, in_channels, 3,
+                      padding=1, groups=in_channels),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+
+            # Pointwise: combines channel info for edge map
+            nn.Conv2d(in_channels, in_channels, 1),
+            nn.BatchNorm2d(in_channels),
+            nn.Sigmoid()  # Produces edge attention map [0, 1]
+        )
+
+        # Feature refinement path
+        self.refine_conv = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, 3, padding=1),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        """
+        Args:
+            x: Feature map [B, C, H, W]
+
+        Returns:
+            refined: Boundary-refined features [B, C, H, W]
+        """
+        # Detect boundary regions (high gradient areas)
+        edge_attention = self.edge_detector(x)  # [B, C, H, W], values in [0,1]
+
+        # Refine features
+        refined = self.refine_conv(x)
+
+        # Apply edge-weighted residual connection
+        # - In boundary regions (edge_attention u2248 1): use refined features more
+        # - In flat regions (edge_attention u2248 0): keep original features
+        output = x + refined * edge_attention
+
+        return output
+
+
+class AdvancedBoundaryRefinement(nn.Module):
+    """
+    More sophisticated version using explicit gradient-based edge detection
+    """
+
+    def __init__(self, in_channels):
+        super().__init__()
+
+        # Sobel-like edge detection (learns edge kernels)
+        self.horizontal_edge = nn.Conv2d(in_channels, in_channels,
+                                         kernel_size=3, padding=1,
+                                         groups=in_channels, bias=False)
+        self.vertical_edge = nn.Conv2d(in_channels, in_channels,
+                                       kernel_size=3, padding=1,
+                                       groups=in_channels, bias=False)
+
+        # Feature processing
+        self.edge_fusion = nn.Sequential(
+            nn.Conv2d(in_channels * 2, in_channels, 1),
+            nn.BatchNorm2d(in_channels),
+            nn.ReLU(inplace=True)
+        )
+
+        self.boundary_refine = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, 3,
+                      padding=1, groups=in_channels),
+            nn.Conv2d(in_channels, in_channels, 1),
+            nn.BatchNorm2d(in_channels),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # Compute gradients in horizontal and vertical directions
+        h_edges = self.horizontal_edge(x)
+        v_edges = self.vertical_edge(x)
+
+        # Combine edge information
+        edges = torch.cat([h_edges, v_edges], dim=1)
+        edge_features = self.edge_fusion(edges)
+
+        # Generate boundary attention
+        boundary_attn = self.boundary_refine(edge_features)
+
+        # Weighted combination: emphasize boundaries
+        return x + x * boundary_attn
 
 
 class SingleLightConv(Module):
@@ -163,22 +259,12 @@ class YOLOSegPlusPlus(Module):
         # ---Decoder Body---
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                # SingleLightConv(128, 96)
-                # LightConv(128, 96)
-                # C3Ghost(128+1, 96, n=1),
                 C3Ghost(128, 64, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
                 self.nearest,
-                # self.bilinear,
-                # SingleLightConv(96, 64),
-                # LightConv(96, 64),
-                # ECA(),
-
-                # ---PREVIOUS---
                 DoubleLightConv(64, 64),
-                # ---PREVIOUS---
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
                 C3Ghost(64, 32),
@@ -186,27 +272,12 @@ class YOLOSegPlusPlus(Module):
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.nearest,
-                # self.bilinear,
-
                 SingleLightConv(32, 16),
-                # LightConv(64, 32),
-                # ECA(),
 
-                # ---PREVIOUS---
-                # DoubleLightConv(64, 32)
-                # ---PREVIOUS---
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
-                # self.nearest,
                 self.bilinear,
-
                 SingleLightConv(16, 8),
-                # LightConv(32, 16),
-                # ECA(),
-
-                # ---PREVIOUS---
-                # DoubleLightConv(16, 8)
-                # ---PREVIOUS---
             ),
         ])
         self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
@@ -216,8 +287,10 @@ class YOLOSegPlusPlus(Module):
 
         # ---Indices---
         self.upsample_idx = {2, 5, 6}
-        self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
-        self.decoder_skip_idx = {2}
+        # self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
+        # <- Must be at respective resolution
+        self.encoder_skip_idx = {0, 1, 2, 4}
+        self.decoder_skip_idx = {2, 3, 4}
 
         # if torch.cuda.is_available() and training:
         #     print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
@@ -320,7 +393,7 @@ class YOLOSegPlusPlus(Module):
         i = -1  # <- Start from last index
 
         # ---Decoder "Semantic Bottleneck"---
-        skip = features[i]
+        skip = torch.sigmoid(features[i])
 
         # x = (skip * logits) + skip
         x = skip * (logits + 1)
@@ -339,41 +412,3 @@ class YOLOSegPlusPlus(Module):
         out = self.output(x)
         # ---Decoder Body---
         return out
-
-        """    
-        # ---Encoder (weights frozen in training loop)---
-        skip_connections = []
-        for idx, module in enumerate(self.encoder):
-            x = module(x)
-            if idx in self.encoder_skip_idx:
-                # Manually cache tensors for skips
-                skip_connections.append(x)
-
-        # ---Decoder "Semantic Bottleneck" (trainable)---
-        i = len(skip_connections) - 1  # <- Start from last index
-        skip = skip_connections[i]
-        i -= 1
-
-        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-        # x = torch.concat([skip, logits], dim=1)
-        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-
-        # ---SOFT GATING---
-        x = (skip * logits) + skip
-        # ---SOFT GATING---
-
-        # ---NO LOGITS---
-        # x = skip
-        # ---NO LOGITS---
-
-        # ---Decoder Body (Trainable)---
-
-        for idx, module in enumerate(self.decoder):
-            if idx in self.decoder_skip_idx:
-                skip = skip_connections[i]
-                x = torch.concat([x, skip], dim=1)
-                i -= 1
-            x = module(x)
-        out = self.output(x)
-        return out
-        """

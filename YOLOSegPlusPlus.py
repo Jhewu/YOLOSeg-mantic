@@ -301,35 +301,6 @@ class YOLOSegPlusPlus(Module):
         #     self.activation_cache = deque(maxlen=3)
         #     self._assign_hooks()
 
-    def _hook_fn(self, module, input, output):
-        """
-        Forward hook, once activate appends the output to
-        self.activation_cache
-        """
-        self.activation_cache.append(output.detach())
-        if self.verbose:
-            print(f"\nSuccessfully cached the output {module}\n")
-
-    def _assign_hooks(self, modules: list[str] = ["2", "4"]):
-        """
-        Assigns forward hooks for YOLOv12-Seg forward
-        Depends on self._hook_fn()
-
-        Args:
-            modules (list[str]): List containing the names of the modules
-        """
-        found = []
-        for name, module in self.encoder.named_modules():
-            modules = set(modules)
-            if name in modules:
-                module.register_forward_hook(self._hook_fn)
-                if self.verbose:
-                    print(f"Hook registered on: {name} -> {module}")
-                found.append(name)
-
-        if not found:
-            raise ValueError(f"Modules not found in YOLO")
-
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
         Inference forward step for YOLOSeg++

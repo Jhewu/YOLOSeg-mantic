@@ -261,7 +261,7 @@ class Trainer:
             torch.backends.cudnn.benchmark = False
 
         """INTEGRATE LATER"""
-        aux_weights = [0.5, 0.5]
+        aux_weights = [0.1, 0.2]
 
         patience = 0  # --> local patience for early stopping
         for epoch in tqdm(range(self.epochs)):
@@ -277,25 +277,25 @@ class Trainer:
                     mask = img_mask[1].float().to(self.device)
                     optimizer.zero_grad()
                     with torch.amp.autocast(device_type=self.device):
-                        # pred = self.model(img)
-                        # loss = self.loss(pred, mask)
+                        pred = self.model(img)
+                        loss = self.loss(pred, mask)
 
                         # ---DEEP SURPERVISION---
-                        pred, aux = self.model(img, return_aux=True)
-                        main_loss = self.loss(pred, mask)
-
-                        aux_loss = 0
-                        for i, aux_out in enumerate(aux):
-                            # Downsample target to match auxiliary output resolution
-                            masks_downsampled = nn.functional.interpolate(
-                                mask,
-                                size=aux_out.shape[-2:],
-                                mode='nearest'
-                            )
-                            aux_loss += self.loss(
-                                aux_out, masks_downsampled) * aux_weights[i]
-
-                        loss = main_loss + aux_loss
+#                         pred, aux = self.model(img, return_aux=True)
+#                         main_loss = self.loss(pred, mask)
+#
+#                         aux_loss = 0
+#                         for i, aux_out in enumerate(aux):
+#                             # Downsample target to match auxiliary output resolution
+#                             masks_downsampled = nn.functional.interpolate(
+#                                 mask,
+#                                 size=aux_out.shape[-2:],
+#                                 mode='nearest'
+#                             )
+#                             aux_loss += self.loss(
+#                                 aux_out, masks_downsampled) * aux_weights[i]
+#
+#                         loss = main_loss + aux_loss
                         # ---DEEP SURPERVISION---
 
                     if torch.isnan(loss):
@@ -336,25 +336,25 @@ class Trainer:
                     mask = img_mask[1].float().to(self.device)
 
                     optimizer.zero_grad()
-                    # pred = self.model(img)
-                    # loss = self.loss(pred, mask)
+                    pred = self.model(img)
+                    loss = self.loss(pred, mask)
 
                     # ---DEEP SURPERVISION---
-                    pred, aux = self.model(img, return_aux=True)
-                    main_loss = self.loss(pred, mask)
-
-                    aux_loss = 0
-                    for i, aux_out in enumerate(aux):
-                        # Downsample target to match auxiliary output resolution
-                        masks_downsampled = nn.functional.interpolate(
-                            mask,
-                            size=aux_out.shape[-2:],
-                            mode='nearest'
-                        )
-                        aux_loss += self.loss(
-                            aux_out, masks_downsampled) * aux_weights[i]
-
-                    loss = main_loss + aux_loss
+#                     pred, aux = self.model(img, return_aux=True)
+#                     main_loss = self.loss(pred, mask)
+#
+#                     aux_loss = 0
+#                     for i, aux_out in enumerate(aux):
+#                         # Downsample target to match auxiliary output resolution
+#                         masks_downsampled = nn.functional.interpolate(
+#                             mask,
+#                             size=aux_out.shape[-2:],
+#                             mode='nearest'
+#                         )
+#                         aux_loss += self.loss(
+#                             aux_out, masks_downsampled) * aux_weights[i]
+#
+#                     loss = main_loss + aux_loss
                     # ---DEEP SURPERVISION---
 
                     train_running_loss += loss.item()
@@ -384,25 +384,25 @@ class Trainer:
                     img = img_mask[0].float().to(self.device)
                     mask = img_mask[1].float().to(self.device)
 
-                    # pred = self.model(img)
-                    # loss = self.loss(pred, mask)
+                    pred = self.model(img)
+                    loss = self.loss(pred, mask)
 
                     # ---DEEP SURPERVISION---
-                    pred, aux = self.model(img, return_aux=True)
-                    main_loss = self.loss(pred, mask)
-
-                    aux_loss = 0
-                    for i, aux_out in enumerate(aux):
-                        # Downsample target to match auxiliary output resolution
-                        masks_downsampled = nn.functional.interpolate(
-                            mask,
-                            size=aux_out.shape[-2:],
-                            mode='nearest'
-                        )
-                        aux_loss += self.loss(
-                            aux_out, masks_downsampled) * aux_weights[i]
-
-                    loss = main_loss + aux_loss
+#                     pred, aux = self.model(img, return_aux=True)
+#                     main_loss = self.loss(pred, mask)
+#
+#                     aux_loss = 0
+#                     for i, aux_out in enumerate(aux):
+#                         # Downsample target to match auxiliary output resolution
+#                         masks_downsampled = nn.functional.interpolate(
+#                             mask,
+#                             size=aux_out.shape[-2:],
+#                             mode='nearest'
+#                         )
+#                         aux_loss += self.loss(
+#                             aux_out, masks_downsampled) * aux_weights[i]
+#
+#                     loss = main_loss + aux_loss
                     # ---DEEP SURPERVISION---
 
                     # Accumulate Loss and Metrics
@@ -602,7 +602,7 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_aug/weights/best.pt",
+    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_best/weights/best.pt",
                   data="data/data.yaml",
                   verbose=True,
                   imgsz=160,

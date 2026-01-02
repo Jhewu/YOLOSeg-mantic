@@ -16,42 +16,46 @@ class BoundaryRefinementModule(nn.Module):
     This module detects boundaries and sharpens features in those regions.
     """
 
-    def __init__(self, in_channels):
+    def __init__(self, in_channels: int, simple: bool = True):
         super().__init__()
 
-        # Edge detection path (learns to detect boundaries)
-        # Uses depthwise separable conv for efficiency
-#         self.edge_detector = nn.Sequential(
-#             # Depthwise: detects spatial patterns per channel
-#             nn.Conv2d(in_channels, in_channels, 3,
-#                       padding=1, groups=in_channels),
-#             nn.BatchNorm2d(in_channels),
-#             nn.ReLU(inplace=True),
-# 
-#             # Pointwise: combines channel info for edge map
-#             nn.Conv2d(in_channels, in_channels, 1),
-#             nn.BatchNorm2d(in_channels),
-#             nn.Sigmoid()  # Produces edge attention map [0, 1]
-#         )
-        self.edge_detector = nn.Sequential(
-            # Depthwise only (Spatial only)
-            nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels, bias=False),
-            nn.BatchNorm2d(in_channels),
-            # HardSigmoid is much faster on CPU than standard Sigmoid
-            nn.Hardsigmoid(inplace=True) 
-        )
+        if simple:
+            self.edge_detector = nn.Sequential(
+                # Depthwise only (Spatial only)
+                nn.Conv2d(in_channels, in_channels, 3, padding=1,
+                          groups=in_channels, bias=False),
+                nn.BatchNorm2d(in_channels),
+                # HardSigmoid is much faster on CPU than standard Sigmoid
+                nn.Hardsigmoid(inplace=True)
+            )
+            self.refine_conv = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, 1, bias=False),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True)
+            )
 
-        # Feature refinement path
-        # self.refine_conv = nn.Sequential(
-        #     nn.Conv2d(in_channels, in_channels, 3, padding=1),
-        #     nn.BatchNorm2d(in_channels),
-        #     nn.ReLU(inplace=True)
-        # )
-        self.refine_conv = nn.Sequential(
-                    nn.Conv2d(in_channels, in_channels, 1, bias=False),
-                    nn.BatchNorm2d(in_channels),
-                    nn.ReLU(inplace=True)
-                )
+        else:
+            # Edge detection path (learns to detect boundaries)
+            # Uses depthwise separable conv for efficiency
+            self.edge_detector = nn.Sequential(
+                # Depthwise: detects spatial patterns per channel
+                nn.Conv2d(in_channels, in_channels, 3,
+                          padding=1, groups=in_channels),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+
+                # Pointwise: combines channel info for edge map
+                nn.Conv2d(in_channels, in_channels, 1),
+                nn.BatchNorm2d(in_channels),
+                nn.Sigmoid()  # Produces edge attention map [0, 1]
+            )
+
+            # Feature refinement path
+            self.refine_conv = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, 3, padding=1),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True)
+            )
 
     def forward(self, x):
         """
@@ -73,53 +77,6 @@ class BoundaryRefinementModule(nn.Module):
         output = x + refined * edge_attention
 
         return output
-
-
-class AdvancedBoundaryRefinement(nn.Module):
-    """
-    More sophisticated version using explicit gradient-based edge detection
-    """
-
-    def __init__(self, in_channels):
-        super().__init__()
-
-        # Sobel-like edge detection (learns edge kernels)
-        self.horizontal_edge = nn.Conv2d(in_channels, in_channels,
-                                         kernel_size=3, padding=1,
-                                         groups=in_channels, bias=False)
-        self.vertical_edge = nn.Conv2d(in_channels, in_channels,
-                                       kernel_size=3, padding=1,
-                                       groups=in_channels, bias=False)
-
-        # Feature processing
-        self.edge_fusion = nn.Sequential(
-            nn.Conv2d(in_channels * 2, in_channels, 1),
-            nn.BatchNorm2d(in_channels),
-            nn.ReLU(inplace=True)
-        )
-
-        self.boundary_refine = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, 3,
-                      padding=1, groups=in_channels),
-            nn.Conv2d(in_channels, in_channels, 1),
-            nn.BatchNorm2d(in_channels),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        # Compute gradients in horizontal and vertical directions
-        h_edges = self.horizontal_edge(x)
-        v_edges = self.vertical_edge(x)
-
-        # Combine edge information
-        edges = torch.cat([h_edges, v_edges], dim=1)
-        edge_features = self.edge_fusion(edges)
-
-        # Generate boundary attention
-        boundary_attn = self.boundary_refine(edge_features)
-
-        # Weighted combination: emphasize boundaries
-        return x + x * boundary_attn
 
 
 class SingleLightConv(Module):
@@ -257,7 +214,7 @@ class YOLOSegPlusPlus(Module):
             scale_factor=2, mode="nearest")
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128, 64, n=1),
+                C3Ghost(128, 64, n=2),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
@@ -265,7 +222,7 @@ class YOLOSegPlusPlus(Module):
                 DoubleLightConv(64, 64),
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64, 32),
+                C3Ghost(64, 32, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
@@ -274,12 +231,12 @@ class YOLOSegPlusPlus(Module):
 
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
-                self.bilinear,
+                self.nearest,
                 SingleLightConv(16, 8),
             ),
         ])
         self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
-        
+
         # ---Auxiliary Output Heads Section---
         self.aux_out = nn.ModuleList([
             nn.Conv2d(16, 1, kernel_size=1),
@@ -289,8 +246,6 @@ class YOLOSegPlusPlus(Module):
         # ---Boundary Refinement Section---
         if refinement == "basic":
             self.boundary_refine = BoundaryRefinementModule(8)
-        elif refinement == "advanced":
-            self.boundary_refine = AdvancedBoundaryRefinement(8)
         else:
             self.boundary_refine = None
 

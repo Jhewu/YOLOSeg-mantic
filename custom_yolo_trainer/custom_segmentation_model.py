@@ -1,9 +1,221 @@
-from ultralytics.nn.tasks import DetectionModel
-from ultralytics.utils.loss import v8SegmentationLoss
+# Internal Import
+from copy import deepcopy
 
+# External Import
+from ultralytics.nn.tasks import BaseModel, parse_model
+import torch
+from ultralytics.nn.modules import Detect, Segment, YOLOESegment, Pose, OBB
+from ultralytics.utils import LOGGER
+from ultralytics.utils.plotting import feature_visualization
+from ultralytics.utils.torch_utils import initialize_weights
+
+# Local Import
 from custom_yolo_trainer.custom_v8_segmentation_loss import Customv8SegmentationLoss
 
-class CustomSegmentationModel(DetectionModel):
+
+class CustomBaseModel(BaseModel):
+    """Base class for all YOLO models in the Ultralytics family.
+
+    This class provides common functionality for YOLO models including forward pass handling, model fusion, information
+    display, and weight loading capabilities.
+
+    Attributes:
+        model (torch.nn.Module): The neural network model.
+        save (list): List of layer indices to save outputs from.
+        stride (torch.Tensor): Model stride values.
+
+    Methods:
+        forward: Perform forward pass for training or inference.
+        predict: Perform inference on input tensor.
+        fuse: Fuse Conv2d and BatchNorm2d layers for optimization.
+        info: Print model information.
+        load: Load weights into the model.
+        loss: Compute loss for training.
+
+    Examples:
+        Create a BaseModel instance
+        >>> model = BaseModel()
+        >>> model.info()  # Display model information
+    """
+
+    def predict(self, x, profile=False, visualize=False, augment=False, embed=None, return_features=False, seg_features_idxs={2, 4}):
+        """Perform a forward pass through the network.
+
+        JUN MODIFICATION: Added two extra parameters return features and seg_features_idxs
+        for explicit tensor returns (faster run-time for YOLOSeg++)
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool): Print the computation time of each layer if True.
+            visualize (bool): Save the feature maps of the model if True.
+            augment (bool): Augment image during prediction.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+            return_features (bool): If True, returns tensors at seg_features_idxs for fast YOLOSeg++ inference
+            seg_features_idxs (set): A set containing the idxs of YOLO Detect model tensors for fast YOLOSeg++ inference
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        if augment:
+            return self._predict_augment(x)
+        return self._predict_once(x, profile, visualize, embed, return_features=return_features, seg_features_idxs=seg_features_idxs)
+
+    def _predict_once(self, x, profile=False, visualize=False, embed=None,
+                      return_features=False, seg_features_idxs={2, 4}):
+        """Perform a forward pass through the network.
+
+        JUN MODIFICATION: Added two extra parameters return features and seg_features_idxs
+        for explicit tensor returns (faster run-time for YOLOSeg++)
+
+        Args:
+            x (torch.Tensor): The input tensor to the model.
+            profile (bool): Print the computation time of each layer if True.
+            visualize (bool): Save the feature maps of the model if True.
+            embed (list, optional): A list of feature vectors/embeddings to return.
+            return_features (bool): If True, returns tensors at seg_features_idxs for fast YOLOSeg++ inference
+            seg_features_idxs (set): A set containing the idxs of YOLO Detect model tensors for fast YOLOSeg++ inference
+
+        Returns:
+            (torch.Tensor): The last output of the model.
+        """
+        y, dt, embeddings = [], [], []  # outputs
+
+        # ------JUN MODIFICATION------
+        features = []
+        # ------JUN MODIFICATION------
+
+        embed = frozenset(embed) if embed is not None else {-1}
+        max_idx = max(embed)
+        for m in self.model:
+            if m.f != -1:  # if not from previous layer
+                x = y[m.f] if isinstance(m.f, int) else [
+                    x if j == -1 else y[j] for j in m.f]  # from earlier layers
+            if profile:
+                self._profile_one_layer(m, x, dt)
+            x = m(x)  # run
+            y.append(x if m.i in self.save else None)  # save output
+
+            # ------JUN MODIFICATION------
+            if return_features and m.i in seg_features_idxs:
+                features.append(x)
+            # ------JUN MODIFICATION------
+
+            if visualize:
+                feature_visualization(x, m.type, m.i, save_dir=visualize)
+            if m.i in embed:
+                embeddings.append(torch.nn.functional.adaptive_avg_pool2d(
+                    x, (1, 1)).squeeze(-1).squeeze(-1))  # flatten
+                if m.i == max_idx:
+                    return torch.unbind(torch.cat(embeddings, 1), dim=0)
+
+        # ------JUN MODIFICATION------
+        logits = None
+        if return_features:
+            detect_branch, cls_branch = x
+            twenty, ten, five = cls_branch
+            logits = twenty[:, -1:]
+
+            # logits = x[1][0][:, -1:]
+            return x, features, logits
+        # ------JUN MODIFICATION------
+
+        return x
+
+
+class CustomDetectionModel(CustomBaseModel):
+    """YOLO detection model.
+
+    JUN COMMENT: Imported here for subclassing BaseModel
+
+    This class implements the YOLO detection architecture, handling model initialization, forward pass, augmented
+    inference, and loss computation for object detection tasks.
+
+    Attributes:
+        yaml (dict): Model configuration dictionary.
+        model (torch.nn.Sequential): The neural network model.
+        save (list): List of layer indices to save outputs from.
+        names (dict): Class names dictionary.
+        inplace (bool): Whether to use inplace operations.
+        end2end (bool): Whether the model uses end-to-end detection.
+        stride (torch.Tensor): Model stride values.
+
+    Methods:
+        __init__: Initialize the YOLO detection model.
+        _predict_augment: Perform augmented inference.
+        _descale_pred: De-scale predictions following augmented inference.
+        _clip_augmented: Clip YOLO augmented inference tails.
+        init_criterion: Initialize the loss criterion.
+
+    Examples:
+        Initialize a detection model
+        >>> model = DetectionModel("yolo11n.yaml", ch=3, nc=80)
+        >>> results = model.predict(image_tensor)
+    """
+
+    def __init__(self, cfg="yolo11n.yaml", ch=3, nc=None, verbose=True):
+        """Initialize the YOLO detection model with the given config and parameters.
+
+        Args:
+            cfg (str | dict): Model configuration file path or dictionary.
+            ch (int): Number of input channels.
+            nc (int, optional): Number of classes.
+            verbose (bool): Whether to display model information.
+        """
+        super().__init__()
+        self.yaml = cfg if isinstance(
+            cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        if self.yaml["backbone"][0][2] == "Silence":
+            LOGGER.warning(
+                "YOLOv9 `Silence` module is deprecated in favor of torch.nn.Identity. "
+                "Please delete local *.pt file and re-download the latest model checkpoint."
+            )
+            self.yaml["backbone"][0][2] = "nn.Identity"
+
+        # Define model
+        self.yaml["channels"] = ch  # save channels
+        if nc and nc != self.yaml["nc"]:
+            LOGGER.info(f"Overriding model.yaml nc={
+                        self.yaml['nc']} with nc={nc}")
+            self.yaml["nc"] = nc  # override YAML value
+        self.model, self.save = parse_model(
+            deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+        self.names = {i: f"{i}" for i in range(
+            self.yaml["nc"])}  # default names dict
+        self.inplace = self.yaml.get("inplace", True)
+        self.end2end = getattr(self.model[-1], "end2end", False)
+
+        # Build strides
+        m = self.model[-1]  # Detect()
+        # includes all Detect subclasses like Segment, Pose, OBB, YOLOEDetect, YOLOESegment
+        if isinstance(m, Detect):
+            s = 256  # 2x min stride
+            m.inplace = self.inplace
+
+            def _forward(x):
+                """Perform a forward pass through the model, handling different Detect subclass types accordingly."""
+                if self.end2end:
+                    return self.forward(x)["one2many"]
+                return self.forward(x)[0] if isinstance(m, (Segment, YOLOESegment, Pose, OBB)) else self.forward(x)
+
+            self.model.eval()  # Avoid changing batch statistics until training begins
+            m.training = True  # Setting it to True to properly return strides
+            m.stride = torch.tensor(
+                # forward
+                [s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])
+            self.stride = m.stride
+            self.model.train()  # Set model back to training(default) mode
+            m.bias_init()  # only run once
+        else:
+            self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
+
+        # Init weights, biases
+        initialize_weights(self)
+        if verbose:
+            self.info()
+            LOGGER.info("")
+
+
+class CustomSegmentationModel(CustomDetectionModel):
     """
     YOLO segmentation model.
 

@@ -1,5 +1,5 @@
 from YOLOSegPlusPlus import YOLOSegPlusPlus
-from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
+from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
 from torch import nn
@@ -62,23 +62,23 @@ class Trainer:
         self.model_path = model_path
 
         # ------PREVIOUS LOSS------
-        self.loss = DiceLoss(
-            include_background=False,  # single class
-            to_onehot_y=False,         # single class
-            sigmoid=True,
-            soft_label=True,          # should improve convergence
-            batch=True,               # should improve stability during training
-            reduction="mean")
+        # self.loss = DiceLoss(
+        #     include_background=False,  # single class
+        #     to_onehot_y=False,         # single class
+        #     sigmoid=True,
+        #     soft_label=True,          # should improve convergence
+        #     batch=True,               # should improve stability during training
+        #     reduction="mean")
         # ------PREVIOUS LOSS------
 
         # -----NEW LOSS-----
-        # self.loss = DiceCELoss(
-        #     include_background = False, # Single class
-        #     to_onehot_y = False,
-        #     sigmoid = True,
-        #     reduction = "mean",
-        #     batch = True,
-        # )
+        self.loss = DiceCELoss(
+            include_background=False,  # Single class
+            to_onehot_y=False,
+            sigmoid=True,
+            reduction="mean",
+            batch=True,
+        )
         # -----NEW LOSS-----
 
         self.dice_metric = DiceMetric(
@@ -126,7 +126,7 @@ class Trainer:
     def create_dir(self, directory: str):
         """
         Creates the given directory if it does not exists
-        Args: 
+        Args:
             directory (str): directory to be created
         """
         if not os.path.exists(directory):
@@ -187,18 +187,14 @@ class Trainer:
         train_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/train",
-            objectmap_path="objectmap/train",
             mask_path="masks/train",
-            image_size=self.image_size,
-            objectmap_sizes=[20])
+            image_size=self.image_size)
 
         val_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/val",
-            objectmap_path="objectmap/val",
             mask_path="masks/val",
-            image_size=self.image_size,
-            objectmap_sizes=[20])
+            image_size=self.image_size)
 
         train_dataloader = DataLoader(dataset=train_dataset,
                                       batch_size=self.batch_size,
@@ -216,6 +212,7 @@ class Trainer:
         # Add model to device
         self.model.to(self.device)
         self.model.train()
+        self.model.yolo.eval()
 
         # Creates the dataloader
         train_dataloader, val_dataloader = self.create_dataloader(
@@ -263,23 +260,43 @@ class Trainer:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
+        """INTEGRATE LATER"""
+        aux_weights = [0.1, 0.2]
+
         patience = 0  # --> local patience for early stopping
         for epoch in tqdm(range(self.epochs)):
-            self.model.train()
+            # self.model.train()
             self.dice_metric.reset()
 
             train_start_time = time.time()
             train_running_loss = 0
 
             if self.mixed_precision:
-                for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(train_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
                     optimizer.zero_grad()
                     with torch.amp.autocast(device_type=self.device):
-                        pred = self.model(img, heatmaps)
+                        pred = self.model(img)
                         loss = self.loss(pred, mask)
+
+                        # ---DEEP SURPERVISION---
+#                         pred, aux = self.model(img, return_aux=True)
+#                         main_loss = self.loss(pred, mask)
+#
+#                         aux_loss = 0
+#                         for i, aux_out in enumerate(aux):
+#                             # Downsample target to match auxiliary output resolution
+#                             masks_downsampled = nn.functional.interpolate(
+#                                 mask,
+#                                 size=aux_out.shape[-2:],
+#                                 mode='nearest'
+#                             )
+#                             aux_loss += self.loss(
+#                                 aux_out, masks_downsampled) * aux_weights[i]
+#
+#                         loss = main_loss + aux_loss
+                        # ---DEEP SURPERVISION---
 
                     if torch.isnan(loss):
                         print("NaN loss detected!")
@@ -314,14 +331,31 @@ class Trainer:
                     self.dice_metric(pred_binary, mask)
 
             else:
-                for idx, img_mask_heatmap in enumerate(tqdm(train_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(train_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
 
                     optimizer.zero_grad()
-                    pred = self.model(img, heatmaps)
+                    pred = self.model(img)
                     loss = self.loss(pred, mask)
+
+                    # ---DEEP SURPERVISION---
+#                     pred, aux = self.model(img, return_aux=True)
+#                     main_loss = self.loss(pred, mask)
+#
+#                     aux_loss = 0
+#                     for i, aux_out in enumerate(aux):
+#                         # Downsample target to match auxiliary output resolution
+#                         masks_downsampled = nn.functional.interpolate(
+#                             mask,
+#                             size=aux_out.shape[-2:],
+#                             mode='nearest'
+#                         )
+#                         aux_loss += self.loss(
+#                             aux_out, masks_downsampled) * aux_weights[i]
+#
+#                     loss = main_loss + aux_loss
+                    # ---DEEP SURPERVISION---
 
                     train_running_loss += loss.item()
                     loss.backward()
@@ -346,13 +380,30 @@ class Trainer:
             val_start_time = time.time()
             self.model.eval()
             with torch.no_grad():
-                for idx, img_mask_heatmap in enumerate(tqdm(val_dataloader)):
-                    img = img_mask_heatmap[0].float().to(self.device)
-                    mask = img_mask_heatmap[1].float().to(self.device)
-                    heatmaps = img_mask_heatmap[2].float().to(self.device)
+                for idx, img_mask in enumerate(tqdm(val_dataloader)):
+                    img = img_mask[0].float().to(self.device)
+                    mask = img_mask[1].float().to(self.device)
 
-                    pred = self.model(img, heatmaps)
+                    pred = self.model(img)
                     loss = self.loss(pred, mask)
+
+                    # ---DEEP SURPERVISION---
+#                     pred, aux = self.model(img, return_aux=True)
+#                     main_loss = self.loss(pred, mask)
+#
+#                     aux_loss = 0
+#                     for i, aux_out in enumerate(aux):
+#                         # Downsample target to match auxiliary output resolution
+#                         masks_downsampled = nn.functional.interpolate(
+#                             mask,
+#                             size=aux_out.shape[-2:],
+#                             mode='nearest'
+#                         )
+#                         aux_loss += self.loss(
+#                             aux_out, masks_downsampled) * aux_weights[i]
+#
+#                     loss = main_loss + aux_loss
+                    # ---DEEP SURPERVISION---
 
                     # Accumulate Loss and Metrics
                     val_running_loss += loss.item()
@@ -551,21 +602,18 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(
-model="pretrained_detect_yolo/yolo12n_det/weights/best.pt",
-    # model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
-                  data=f"data/data.yaml",
+    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_best/weights/best.pt",
+                  data="data/data.yaml",
                   verbose=True,
                   imgsz=160,
                   save=False)
 
     # Create predictor and Load checkpoint
-    YOLO_predictor = CustomSegmentationPredictor(overrides=p_args)
-    YOLO_predictor.setup_model(p_args["model"])
-    # modify_YOLO(YOLO_predictor)
+    YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
+    YOLO_trainer.setup_model()
 
-    # Create YOLOU instance
-    model = YOLOSegPlusPlus(predictor=YOLO_predictor)
+    # Create YOLOSeg++ Instance
+    model = YOLOSegPlusPlus(predictor=YOLO_trainer)
 
     trainable_count = count_parameters(model, only_trainable=True)
     all_counts = count_parameters(model, only_trainable=False)

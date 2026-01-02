@@ -1,13 +1,82 @@
-from typing import List
-from ultralytics.nn.modules import C3Ghost, DWConv, C2f, DWConvTranspose2d, Conv, C3k2, ConvTranspose, CBAM, LightConv
+# Local
+from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 
-# local/custom scripts
-from custom_yolo_predictor.custom_detseg_predictor import CustomDetectionPredictor
-
+# External libs
 import torch
 import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
-import torch.nn.functional as F
+from ultralytics.nn.modules import C3Ghost, LightConv
+
+
+class BoundaryRefinementModule(nn.Module):
+    """
+    Refines segmentation boundaries using edge-aware feature enhancement
+
+    Key Insight: HD95 errors occur at boundaries where predictions are uncertain.
+    This module detects boundaries and sharpens features in those regions.
+    """
+
+    def __init__(self, in_channels: int, simple: bool = True):
+        super().__init__()
+
+        if simple:
+            self.edge_detector = nn.Sequential(
+                # Depthwise only (Spatial only)
+                nn.Conv2d(in_channels, in_channels, 3, padding=1,
+                          groups=in_channels, bias=False),
+                nn.BatchNorm2d(in_channels),
+                # HardSigmoid is much faster on CPU than standard Sigmoid
+                nn.Hardsigmoid(inplace=True)
+            )
+            self.refine_conv = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, 1, bias=False),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True)
+            )
+
+        else:
+            # Edge detection path (learns to detect boundaries)
+            # Uses depthwise separable conv for efficiency
+            self.edge_detector = nn.Sequential(
+                # Depthwise: detects spatial patterns per channel
+                nn.Conv2d(in_channels, in_channels, 3,
+                          padding=1, groups=in_channels),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True),
+
+                # Pointwise: combines channel info for edge map
+                nn.Conv2d(in_channels, in_channels, 1),
+                nn.BatchNorm2d(in_channels),
+                nn.Sigmoid()  # Produces edge attention map [0, 1]
+            )
+
+            # Feature refinement path
+            self.refine_conv = nn.Sequential(
+                nn.Conv2d(in_channels, in_channels, 3, padding=1),
+                nn.BatchNorm2d(in_channels),
+                nn.ReLU(inplace=True)
+            )
+
+    def forward(self, x):
+        """
+        Args:
+            x: Feature map [B, C, H, W]
+
+        Returns:
+            refined: Boundary-refined features [B, C, H, W]
+        """
+        # Detect boundary regions (high gradient areas)
+        edge_attention = self.edge_detector(x)  # [B, C, H, W], values in [0,1]
+
+        # Refine features
+        refined = self.refine_conv(x)
+
+        # Apply edge-weighted residual connection
+        # - In boundary regions (edge_attention u2248 1): use refined features more
+        # - In flat regions (edge_attention u2248 0): keep original features
+        output = x + refined * edge_attention
+
+        return output
 
 
 class SingleLightConv(Module):
@@ -95,36 +164,23 @@ class ECA(Module):
 
 class YOLOSegPlusPlus(Module):
     def __init__(self,
-                 predictor: CustomDetectionPredictor,
-                 verbose: bool = False,
-                 target_modules_indices: List[int] = [2, 4, 6]):
+                 predictor: CustomSegmentationTrainer,
+                 refinement: str = "basic",
+                 training: bool = True,
+                 verbose: bool = False):
         """
         WARNING: DOCUMENTATION NOT UPDATED
 
-        Creates a YOLOU-Seg++ Network with Pretrained YOLOv12 (detection) model
-        Main Idea: Using YOLOv12 bbox as guidance in UNet skip connections and recycling YOLOv12 backbone as the encoder
+        Creates a YOLOSeg++ Network with Pretrained YOLOv12 (detection) model
 
         Args: 
-            predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor allowing 4-channels
-            target_modules_indices (list [int]): list of indices to add skip connections (in YOLOv12-Seg every downsample)
+            WORK IN PROGRESS
 
         Attributes: 
-            yolo_predictor (CustomSegmentationTrainer): Custom YOLO segmentation predictor instance  
-            encoder (nn.Sequential): Encoder portion extracted from YOLOv12-Seg backbone (first 9 layers)
-            decoder (nn.Sequential): Decoder portion constructed from encoder modules
-            bottleneck (nn.Sequential): First bottleneck layer with BottleneckCSP block
+            WORK IN PROGRESS
 
         Methods: 
-            _hook_fn: Forward hook function for caching activations (mainly used for YOLOv12-Seg forward pass)
-            _assign_hooks: Registers forward hooks on specified modules
-            _create_concat_block: Creates concatenation blocks for skip connections
-            YOLO_forward: Performs YOLOv12-Seg forward pass to generate initial masks
-            _STN_forward: Applies spatial transformer network for affine transformation
-            forward: Main forward pass implementation
-            _reverse_module_channels: Converts encoder modules to decoder-compatible modules
-            _construct_decoder_from_encoder: Builds decoder from encoder modules
-            check_encoder_decoder_symmetry: Utility method to verify encoder-decoder symmetry
-            print_yolo_named_modules: Debug utility to print all YOLO modules
+            WORK IN PROGRESS
 
         -------------------------------------------------------------------------------------------------------------
         YOLOv12 backbone
@@ -142,153 +198,127 @@ class YOLOSegPlusPlus(Module):
         -------------------------------------------------------------------------------------------------------------
 
         """
-        # TODO
-        # (1) Make the individual modules declaration adaptive
-        # (2) Use iter() instead of indices, which might be prone to breaking
-        # (3) Update Documentation
-        # (4) Implement Inference Step
-        # (5) Clean up Methods
 
         super().__init__()
-        # YOLO predictor and backbone
-        self.encoder = nn.ModuleList(
-            module for module in predictor.model.model.model[0:5])
-        for param in self.encoder.parameters():  # <- Frozen
+        # ---YOLO predictor and backbone---
+        self.yolo = predictor.model
+        for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
-        self.encoder.eval()
-        self.upsample = Upsample(
+        self.yolo.eval()
+        self.encoder = self.yolo.model[:5]
+
+        # ---Decoder Body---
+        self.bilinear = Upsample(
             scale_factor=2, mode="bilinear", align_corners=False)
+        self.nearest = Upsample(
+            scale_factor=2, mode="nearest")
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128+1, 96, n=1),
+                C3Ghost(128, 64, n=2),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
-                self.upsample,
-                DoubleLightConv(96, 64),
+                self.nearest,
+                DoubleLightConv(64, 64),
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64+64, 64),
+                C3Ghost(64, 32, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
-                self.upsample,
-                DoubleLightConv(64, 32)
+                self.nearest,
+                SingleLightConv(32, 16),
+
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
-                self.upsample,
-                DoubleLightConv(32, 16)
+                self.nearest,
+                SingleLightConv(16, 8),
             ),
         ])
-        self.output = nn.Conv2d(in_channels=16, out_channels=1, kernel_size=1)
+        self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
 
-        # Miscellaneous Section
-        self.sigmoid = nn.Sigmoid()
-        self.param = nn.Parameter(torch.tensor([5.0]))
-        self.verbose = verbose
-        self.skip_connections = []
-        self._indices = {
-                    "upsample": set([2, 5, 6]),
-                    "skip_connections_encoder": set([2, 4]),
-                    "skip_connections_decoder": set([2])}
-        
-        # self._indices = {
-        #     "upsample": set([2, 5, 6]),
-        #     "skip_connections_encoder": set([2, 4]),
-        #     "skip_connections_decoder": set([0, 2])}
+        # ---Auxiliary Output Heads Section---
+        self.aux_out = nn.ModuleList([
+            nn.Conv2d(16, 1, kernel_size=1),
+            nn.Conv2d(8, 1, kernel_size=1)
+        ])
 
-        # FUTURE: ADAPT LATER
-        # "upsample": set([1, 3, 5, 7, 8]),
-        # "skip_connections_encoder": set(target_modules_indices), # [2, 4, 6, 8]
-        # "skip_connections_decoder": set( [ abs(item-8) for item in reversed(target_modules_indices) ] )}
-
-        if torch.cuda.is_available():
-            print(f"\nATTENTION: CUDA {torch.cuda.get_device_name(
-                0)} is available, forwarding YOLOv12 backbone twice is faster than forward hooks...\n")
+        # ---Boundary Refinement Section---
+        if refinement == "basic":
+            self.boundary_refine = BoundaryRefinementModule(8)
         else:
-            print(
-                f"\nATTENTION: CUDA is not available (CPU), using forward hooks to save on compute...\n")
-            self.activation_cache = []
-            self._assign_hooks()
+            self.boundary_refine = None
 
-    def _hook_fn(self, module, input, output):
-        """
-        Forward hook, once activate appends the output to
-        self.activation_cache
-        """
-        self.activation_cache.append(output)
-        if self.verbose:
-            print(f"\nSuccessfully cached the output {module}\n")
+        # ---Miscellaneous Section---
+        self.verbose = verbose
 
-    def _assign_hooks(self, modules: list[str] = ["0",
-                                                  "1",
-                                                  "3",
-                                                  "5",
-                                                  "7",
-                                                  "8"]):
+        # ---Indices---
+        self.upsample_idx = {2, 5, 6}
+        # self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
+        self.encoder_skip_idx = {0, 1, 2, 4}
+        self.decoder_skip_idx = {2, 3, 4}
+        self.aux_decoder_idx = {3, 4}  # Example indices
+
+    def inference(self, x: torch.tensor) -> torch.tensor:
         """
-        TODO: REWORK THIS METHOD
-        Assigns forward hooks for YOLOv12-Seg forward
-        Depends on self._hook_fn()
+        Inference forward step for YOLOSeg++
+        Run YOLO forward, and YOLOSeg++ Segmentator Head sequentially
 
         Args:
-            modules (list[str]): List containing the names of the modules
-        """
-        found = []
-        for name, module in self.encoder.named_modules():
-            if name in modules:
-                module.register_forward_hook(self._hook_fn)
-                if verbose:
-                    print(f"Hook registered on: {name} -> {module}")
-                found.append(name)
-
-        if not found:
-            raise ValueError(f"Modules not found in YOLO")
-
-    def inference(self):
-        """
-        FUTURE: Work in progress
-        """
-        pass
-
-    def forward(self, x: torch.tensor, logits: torch.tensor) -> torch.tensor:
-        """
-        Main Forward Step for YOLOSeg++ (for Training)
-        Use self.inference() for inference 
-
-        Args:
-            x        (torch.tensor):  Input tensor [B, 4, H, W]
-            heatmaps (torch.tensor):  List of resized heatmaps tensors to concatenate at skips [1, 1, h, w], where h and w are resized heights and weights (< H and W)
+            x (torch.tensor): Input tensor [B, 4, H, W]
 
         Returns:
-            x (torch.tensor): Output tensor [B, 4, H, W]
+            x (torch.tensor): Output tensor [B, 1, H, W]
         """
-        # Encoder (weights frozen in training loop)
-        self.skip_connections = []
-        for idx, module in enumerate(self.encoder):
-            x = module(x)
-            if idx in self._indices.get("skip_connections_encoder"):
-                # <- Manually cache tensors for skips
-                self.skip_connections.append(x)
 
-        # Decoder (trainable)
-        skip = self.skip_connections.pop()
-        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
-        x = torch.concat([skip, logits], dim=1)
-        # ---CONCATENATION (MUST MODIFY ARCHITECTURE)---
+        with torch.no_grad():
+            out = self.forward(x)
+        return out
 
-        # ---SOFT GATING---
-        # x = (skip * logits) + skip
-        # ---SOFT GATING---
+    def forward(self, x: torch.tensor, return_aux=False) -> torch.tensor:
+        """
+        Training ONLY forward step for YOLOSeg++
+        YOLO logits are precomputed to reduce training time (check generate_objectmaps.py)
+        Use self.inference() for inference
 
-        # ---NO LOGITS---
-        # x = skip
-        # ---NO LOGITS---
+        Args:
+            x (torch.tensor): Input tensor [B, 4, H, W]
+            logits (torch.tensor): YOLO Detect logits to concatenate at skips [B, 1, 20, 20]
 
+        Returns:
+            x (torch.tensor): Output tensor [B, 1, H, W]
+        """
+        # ---YOLO detect forward---
+        with torch.no_grad():
+            x, features, logits = self.yolo.predict(
+                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
+
+        i = -1  # <- Start from last index
+
+        # ---Decoder "Semantic Bottleneck"---
+        skip = torch.sigmoid(features[i])
+        x = skip * (logits + 1)
+        i -= 1
+
+        # ---Decoder Body---
+        aux_out, aux_idx = [], 0
         for idx, module in enumerate(self.decoder):
-            if idx in self._indices.get("skip_connections_decoder"):
-                skip = self.skip_connections.pop()
-                x = torch.concat([x, skip], dim=1)
+            if idx in self.decoder_skip_idx:
+                skip = features[i]
+                x = x * (skip + 1)
+                i -= 1
             x = module(x)
+            # ---Aux Output (Deep Supervision)---
+            if return_aux and idx in self.aux_decoder_idx:
+                aux_pred = self.aux_out[aux_idx](x)
+                aux_out.append(aux_pred)
+                aux_idx += 1
+
+        # -- Boundary Refinement ---
+        if self.boundary_refine:
+            x = self.boundary_refine(x)
+
         out = self.output(x)
+        if return_aux:
+            return out, aux_out
         return out

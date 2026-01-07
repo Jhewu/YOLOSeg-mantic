@@ -1,11 +1,14 @@
 # Internal Libs
-from typing import List, Tuple
+from typing import Tuple
+import random
 import os
 
 # External Libs
 import torch
 import cv2
 from torchvision import transforms
+import torchvision.transforms.functional as TF
+from torchvision.transforms import InterpolationMode
 from torch.utils.data.dataset import Dataset
 
 
@@ -69,10 +72,58 @@ class CustomDataset(Dataset):
             mask_np, (self.image_size, self.image_size), interpolation=cv2.INTER_NEAREST)
 
         # Convert to PyTorch Tensor (HWC -> CWH, /255)
-        img_tensor = self.to_tensor(img_resized)
-        mask_tensor = self.to_tensor(mask_resized)
+        img = self.to_tensor(img_resized)
+        mask = self.to_tensor(mask_resized)
 
-        return img_tensor, mask_tensor
+        # Data Augmentation
+        if self.do_augmentation:
+
+            # Horizontal Flip (p = 0.5)
+            if random.random() < 0.5:
+                img = TF.hflip(img)
+                mask = TF.hflip(mask)
+
+            # Rotation (+10 degree, p = 0.5)
+            if random.random() < 0.5:
+                angle = random.uniform(-10, 10)
+                img = TF.rotate(
+                    img, angle, interpolation=InterpolationMode.BILINEAR)
+                mask = TF.rotate(mask, angle,
+                                 interpolation=InterpolationMode.NEAREST)
+
+            # Translation 3% (p = 0.5)
+            if random.random() < 0.5:
+                max_t = int(0.03 * self.image_size)
+                tx = random.randint(-max_t, max_t)
+                ty = random.randint(-max_t, max_t)
+
+                img = TF.affine(
+                    img, angle=0, translate=(tx, ty),
+                    scale=1.0, shear=0,
+                    interpolation=InterpolationMode.BILINEAR
+                )
+                mask = TF.affine(
+                    mask, angle=0, translate=(tx, ty),
+                    scale=1.0, shear=0,
+                    interpolation=InterpolationMode.NEAREST
+                )
+
+            # Scaling 5% (p = 0.5)
+            if random.random() < 0.5:
+                scale = random.uniform(0.9, 1.1)
+
+                img = TF.affine(
+                    img, angle=0, translate=(0, 0),
+                    scale=scale, shear=0,
+                    interpolation=InterpolationMode.BILINEAR
+                )
+                mask = TF.affine(
+                    mask, angle=0, translate=(0, 0),
+                    scale=scale, shear=0,
+                    interpolation=InterpolationMode.NEAREST
+                )
+
+        return img, mask
 
     def __len__(self) -> int:
         return len(self.basenames)

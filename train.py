@@ -1,4 +1,4 @@
-from YOLOSegmantic import YOLOSegPlusPlus
+from YOLOSegmantic import YOLOSegmantic
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
@@ -28,7 +28,7 @@ import numpy as np
 
 class Trainer:
     def __init__(self,
-                 model: YOLOSegPlusPlus,
+                 model: YOLOSegmantic,
                  data_path: str,
                  model_path: str = None,
                  device: str = "cuda",
@@ -619,7 +619,7 @@ if __name__ == "__main__":
     YOLO_trainer.setup_model()
 
     # Create YOLOSeg++ Instance
-    model = YOLOSegPlusPlus(predictor=YOLO_trainer)
+    model = YOLOSegmantic(predictor=YOLO_trainer)
 
     trainable_count = count_parameters(model, only_trainable=True)
     all_counts = count_parameters(model, only_trainable=False)

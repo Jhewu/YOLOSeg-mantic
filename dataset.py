@@ -21,6 +21,18 @@ class CustomDataset(Dataset):
                  augmentation: bool = True,
                  seed: int = 42,
                  subsample: float = 1.0):
+        """
+        YOLOSegmantic Cutom Dataset with Basic Augmentation
+
+        Args:
+            root_path (str): Root directory containing images and masks.
+            image_path (str): Subdirectory for images (relative to root_path).
+            mask_path (str): Subdirectory for masks (relative to root_path).
+            image_size (int, optional): Size to which images and masks will be resized. Defaults to 160.
+            augmentation (bool, optional): Whether to apply data augmentation. Defaults to True.
+            seed (int, optional): Random seed for reproducibility. Defaults to 42.
+            subsample (float, optional): Fraction of the dataset to use (for quick testing). Defaults to 1.0.
+        """
 
         # Paths
         self.root_path = root_path

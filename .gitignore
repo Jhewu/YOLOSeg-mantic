@@ -1,4 +1,5 @@
 runs/*
+.vscode/
 __pycache__/
 yolo_checkpoint/*
 archive/

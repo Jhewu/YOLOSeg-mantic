@@ -5,7 +5,7 @@ from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 import torch
 import torch.nn as nn
 from torch.nn import Sequential, Module, Upsample, Conv2d, Conv1d, Identity, AdaptiveAvgPool2d
-from ultralytics.nn.modules import C3Ghost, LightConv
+from ultralytics.nn.modules import C3Ghost, LightConv, C3
 
 
 class BoundaryRefinementModule(nn.Module):
@@ -165,7 +165,7 @@ class ECA(Module):
 class YOLOSegPlusPlus(Module):
     def __init__(self,
                  predictor: CustomSegmentationTrainer,
-                 refinement: str = "basic",
+                 refinement: str = "",
                  training: bool = True,
                  verbose: bool = False):
         """
@@ -214,7 +214,8 @@ class YOLOSegPlusPlus(Module):
             scale_factor=2, mode="nearest")
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128, 64, n=2),
+                C3Ghost(128+1, 64, n=2),
+                # C3(128, 64, n=2),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
@@ -222,42 +223,45 @@ class YOLOSegPlusPlus(Module):
                 DoubleLightConv(64, 64),
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64, 32, n=1),
+                C3Ghost(64+64, 32, n=1),
+                # C3(64, 32, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.nearest,
-                SingleLightConv(32, 16),
+                SingleLightConv(32+32, 16),
 
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
-                self.nearest,
-                SingleLightConv(16, 8),
+                self.bilinear,
+                SingleLightConv(16+16, 8),
             ),
         ])
         self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
 
-        # ---Auxiliary Output Heads Section---
-        self.aux_out = nn.ModuleList([
-            nn.Conv2d(16, 1, kernel_size=1),
-            nn.Conv2d(8, 1, kernel_size=1)
-        ])
+        # --- Auxiliary Output Heads Section ---
+        # self.aux_out = nn.ModuleList([
+        #     nn.Conv2d(16, 1, kernel_size=1),
+        #     nn.Conv2d(8, 1, kernel_size=1)
+        # ])
+        # self.aux_decoder_idx = {3, 4}
 
-        # ---Boundary Refinement Section---
-        if refinement == "basic":
-            self.boundary_refine = BoundaryRefinementModule(8)
+        # --- Boundary Refinement Section ---
+        if refinement == "simple":
+            self.boundary_refine = BoundaryRefinementModule(8, simple=True)
+        elif refinement == "basic":
+            self.boundary_refine = BoundaryRefinementModule(8, simple=False)
         else:
             self.boundary_refine = None
 
-        # ---Miscellaneous Section---
+        # --- Miscellaneous Section ---
         self.verbose = verbose
 
-        # ---Indices---
+        # --- Indices ---
         self.upsample_idx = {2, 5, 6}
-        # self.encoder_skip_idx = {2, 4}  # <- Must be at respective resolution
-        self.encoder_skip_idx = {0, 1, 2, 4}
+        # self.encoder_skip_idx = {2, 4}      # <- Only including early layers
+        self.encoder_skip_idx = {0, 1, 2, 4}  # <- Including ALL layers
         self.decoder_skip_idx = {2, 3, 4}
-        self.aux_decoder_idx = {3, 4}  # Example indices
 
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
@@ -285,40 +289,47 @@ class YOLOSegPlusPlus(Module):
             x (torch.tensor): Input tensor [B, 4, H, W]
             logits (torch.tensor): YOLO Detect logits to concatenate at skips [B, 1, 20, 20]
 
+
         Returns:
             x (torch.tensor): Output tensor [B, 1, H, W]
         """
-        # ---YOLO detect forward---
+        # --- YOLO detect forward ---
         with torch.no_grad():
             x, features, logits = self.yolo.predict(
                 x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
 
         i = -1  # <- Start from last index
 
-        # ---Decoder "Semantic Bottleneck"---
-        skip = torch.sigmoid(features[i])
-        x = skip * (logits + 1)
+        # --- Decoder "Semantic Bottleneck" ---
+        # skip = torch.sigmoid(features[i])
+        # x = skip * (logits + 1)
+        # x = features[i]
+
+        skip = features[i]
+        x = torch.concat([skip, logits], dim=1)
         i -= 1
 
-        # ---Decoder Body---
-        aux_out, aux_idx = [], 0
+        # --- Decoder Body ---
+        # aux_out, aux_idx = [], 0
         for idx, module in enumerate(self.decoder):
             if idx in self.decoder_skip_idx:
                 skip = features[i]
-                x = x * (skip + 1)
+                # x = x * (skip + 1)
+                x = torch.concat([x, skip], dim=1)
                 i -= 1
             x = module(x)
-            # ---Aux Output (Deep Supervision)---
-            if return_aux and idx in self.aux_decoder_idx:
-                aux_pred = self.aux_out[aux_idx](x)
-                aux_out.append(aux_pred)
-                aux_idx += 1
+            # --- Aux Output (Deep Supervision) ---
+            # if return_aux and idx in self.aux_decoder_idx:
+            #     aux_pred = self.aux_out[aux_idx](x)
+            #     aux_out.append(aux_pred)
+            #     aux_idx += 1
 
-        # -- Boundary Refinement ---
+        # --- Boundary Refinement ---
         if self.boundary_refine:
             x = self.boundary_refine(x)
 
         out = self.output(x)
-        if return_aux:
-            return out, aux_out
+        # --- Deep Supervision ---
+        # if return_aux:
+        #     return out, aux_out
         return out

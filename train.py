@@ -1,4 +1,4 @@
-from YOLOSegPlusPlus import YOLOSegPlusPlus
+from YOLOSegmantic import YOLOSegPlusPlus
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 from dataset import CustomDataset
 
@@ -192,8 +192,8 @@ class Trainer:
 
         val_dataset = CustomDataset(
             root_path=data_path,
-            image_path="images/val",
-            mask_path="masks/val",
+            image_path="images/test",
+            mask_path="masks/test",
             image_size=self.image_size)
 
         train_dataloader = DataLoader(dataset=train_dataset,
@@ -602,11 +602,17 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_best/weights/best.pt",
+    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_aug/weights/best.pt",
                   data="data/data.yaml",
                   verbose=True,
                   imgsz=160,
                   save=False)
+
+    # p_args = dict(model="pretrained_detect_yolo/yolo12n_det_coco/weights/best.pt",
+    #               data="data/data.yaml",
+    #               verbose=True,
+    #               imgsz=160,
+    #               save=False)
 
     # Create predictor and Load checkpoint
     YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
@@ -623,7 +629,7 @@ if __name__ == "__main__":
     print("-" * 30)
 
     trainer = Trainer(model=model,
-                      data_path="data/stacked_segmentation",
+                      data_path="data/stacked_segmentation_0",
                       model_path=None,
                       load_and_train=False,
                       mixed_precision=True,

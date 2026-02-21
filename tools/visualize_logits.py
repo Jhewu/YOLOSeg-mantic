@@ -104,14 +104,28 @@ def test_predictor():
     plt.imshow(heatmap.squeeze(0).squeeze(0).cpu().numpy())
     plt.show()
 
-def test_trainer():
+
+def to_tensor(x: torch.tensor, device: str = "cuda", image_size: int = 160):
+
+    x = transforms.ToTensor()(x)
+    x = transforms.Resize(size=(image_size, image_size))(x)
+    x = x.to(device)
+    x = x.unsqueeze(0)
+
+    return x
+
+
+def test_trainer(yolo_path: str = "pretrained_detect_yolo/yolo12n_det_aug/weights/best.pt",
+                 image_with_tumor: bool = True,
+
+                 ):
     """
     Visualize logits using the YOLO Trainer custom class
     """
 
     # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/best_yolo12n_det/weights/best.pt",
-                  data=f"data/data.yaml",
+    p_args = dict(model=yolo_path,
+                  data="data/data.yaml",
                   verbose=True,
                   imgsz=160,
                   save=False)
@@ -120,34 +134,34 @@ def test_trainer():
     YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
     YOLO_trainer.setup_model()
 
-    x = cv2.imread("archive/BraTS-SSA-00041-0007-t1c_image.png",
-                   cv2.IMREAD_UNCHANGED) # Emtpy
-    # x = cv2.imread("/home/jun/Desktop/inspirit/YOLOSeg++/archive/BraTS-SSA-00002-00030-t1c_image.png",
-    # cv2.IMREAD_UNCHANGED) # With Tumor
-
-    x = transforms.ToTensor()(x)
-    x = transforms.Resize(size=(160, 160))(x)
-    x = x.to("cuda")
-    x = x.unsqueeze(0)
-
-    model = YOLO_trainer.model
+    # Create YOLOSegmantic
+    model = YOLOSegPlusPlus(predictor=YOLO_trainer)
     model.to("cuda")
     model.eval()
+    yolo = model.yolo
 
-    x = model.predict(x)
-    detect_branch, cls_branch = x
-    twenty, ten, five = cls_branch
-    logits = twenty[:, -1:]
-    logits = torch.sigmoid(logits)
+    if image_with_tumor:
+        x = cv2.imread("samples/BraTS-SSA-00015-00062-t1c_image.png",
+                       cv2.IMREAD_UNCHANGED)  # With Tumor
+    else:
+        x = cv2.imread("samples/BraTS-SSA-00041-0007-t1c_image.png",
+                       cv2.IMREAD_UNCHANGED)  # Emtpy
 
-    confidence = argmax_conf(detect_branch)
-    space_confidence = spatial_confidence(logits)
+    x = to_tensor(x)
+    x, features, logits = yolo.predict(
+        x, return_features=True, seg_features_idxs={0, 1, 2, 4})
 
-    print(confidence, space_confidence)
+    skip = torch.sigmoid(features[-1])
+    x = skip * (logits + 1)
 
-    plt.imshow(logits.squeeze(0).squeeze(
+    # x = torch.mean(x, dim=1, keepdim=True)
+
+    x = x[:, 0:1, :, :]
+
+    plt.imshow(x.squeeze(0).squeeze(
         0).cpu().detach().numpy())
     plt.show()
+
 
 if __name__ == "__main__":
     test_trainer()

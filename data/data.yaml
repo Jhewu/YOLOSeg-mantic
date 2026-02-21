@@ -1,11 +1,11 @@
 #For the data format, please refer to https://docs.ultralytics.com/datasets/segment/coco
 
 # dataset root directory
-path: /home/jun/Desktop/inspirit/YOLOSeg++/data/stacked_segmentation
+path: /home/jun/Desktop/inspirit/YOLOSeg++/data/stacked_segmentation_0
 
 # train images relative ('relative to path')
 train: images/train
-val: images/val
+val: images/test
 
 channels: 4
 

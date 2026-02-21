@@ -6,7 +6,7 @@ import os
 import time
 from typing import Tuple, List, Union
 from itertools import cycle
-from nms import non_max_suppression
+from tools.nms import non_max_suppression
 
 import torch
 from torch.amp import GradScaler

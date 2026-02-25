@@ -1,7 +1,7 @@
 # Local
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
 
-# External libs
+# External Libs
 import torch
 import torch.nn as nn
 from ultralytics.nn.modules import C3Ghost, LightConv

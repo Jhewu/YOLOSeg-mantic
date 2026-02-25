@@ -1,67 +1,72 @@
-from YOLOSegmantic import YOLOSegmantic
+# Local
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
+from YOLOSegmantic import YOLOSegmantic
 from dataset import CustomDataset
 
-from torch import nn
+# External Libs
+from monai.metrics import DiceMetric, HausdorffDistanceMetric
+from monai.losses import DiceCELoss
 
-import os
-import time
+from torch.utils.data import DataLoader
+from torch.amp import GradScaler
+from torch import optim
+import torch
+
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import pandas as pd
+import numpy as np
+
+# Internal Libs
 from typing import Tuple, List, Union
 from shutil import copy
 from itertools import cycle
-
-import torch
-from torch.amp import GradScaler
-from torch import optim
-from torch.utils.data import DataLoader
-
-from tqdm import tqdm
-import pandas as pd
-import matplotlib.pyplot as plt
-
-from monai.losses import DiceLoss, DiceCELoss
-from monai.metrics import DiceMetric, HausdorffDistanceMetric
-
+import contextlib
 import random
-import numpy as np
+import time
+import os
 
 
 class Trainer:
     def __init__(self,
                  model: YOLOSegmantic,
                  data_path: str,
-                 model_path: str = None,
                  device: str = "cuda",
                  early_stopping_start: int = 50,
                  image_size: int = 160,
                  batch_size: int = 64,
-                 lr: float = 1e-3,
+                 lr: float = 1e-4,
                  epochs: int = 100,
                  patience: int = 25,
+                 model_path: str = None,
                  load_and_train: bool = False,
                  early_stopping: bool = True,
                  mixed_precision: bool = True,
                  ):
         """
-        Initialize Trainer for training and evaluating YOLOSeg++ models.
-
-        This class handles the complete training loop for YOLOSeg++ models including
+        YOLOSegmantic Trainer Class. Handles complete training loop for YOLOSegmantic models including
         data loading, model training, validation, and optional early stopping.
 
         Args:
-            (WORK IN PROGRESS)
-
-        Methods:
-            (WORK IN PROGRESS)
+            model (YOLOSegmantic): The YOLOSegmantic model instance to be trained.
+            data_path (str): Root directory of the dataset, expected to have 'images/train', 'masks/train', 'images/test', 'masks/test' subdirectories.
+            device (str, optional): Device to run training on (e.g., 'cuda' or 'cpu'). Defaults to 'cuda'.
+            early_stopping_start (int, optional): Epoch number after which to start applying early stopping based on validation performance. Defaults to 50.
+            image_size (int, optional): Size to which input images will be resized (assumes square images). Defaults to 160.
+            batch_size (int, optional): Number of samples per training batch. Defaults to 64
+            lr (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            epochs (int, optional): Maximum number of training epochs. Defaults to 100.
+            patience (int, optional): Number of epochs with no improvement on validation metric after 'early_stopping_start' before training is terminated. Defaults to 25.
+            model_path (str, optional): Path to a pre-trained YOLOSegmantic model checkpoint to load before training. If None, training starts from scratch. Defaults to None.
+            load_and_train (bool, optional): If True, loads the model from 'model_path' and continues training. If False, starts training from scratch. Defaults to False.
+            early_stopping (bool, optional): If True, enables early stopping based on validation performance. Defaults to True.
+            mixed_precision (bool, optional): If True, uses mixed precision training for faster performance on compatible hardware. Defaults to True.
 
         """
 
         self.model = model
-        self.device = device
-        self.data_path = data_path
-        self.model_path = model_path
 
-        # ------PREVIOUS LOSS------
+        # ------PREVIOUS LOSS------ #
         # self.loss = DiceLoss(
         #     include_background=False,  # single class
         #     to_onehot_y=False,         # single class
@@ -69,9 +74,9 @@ class Trainer:
         #     soft_label=True,          # should improve convergence
         #     batch=True,               # should improve stability during training
         #     reduction="mean")
-        # ------PREVIOUS LOSS------
+        # ------PREVIOUS LOSS------ #
 
-        # -----NEW LOSS-----
+        # -----NEW LOSS----- #
         self.loss = DiceCELoss(
             include_background=False,  # Single class
             to_onehot_y=False,
@@ -79,15 +84,14 @@ class Trainer:
             reduction="mean",
             batch=True,
         )
-        # -----NEW LOSS-----
+        # -----NEW LOSS----- #
 
         self.dice_metric = DiceMetric(
             include_background=False,
             reduction="mean_batch",
             get_not_nans=False,
             ignore_empty=False,
-            # 2 stands for [0, 1], technically single class
-            num_classes=2,
+            num_classes=2, # 2 stands for [0, 1], technically single class
             return_with_label=False
         )
         self.hd95 = HausdorffDistanceMetric(
@@ -97,19 +101,25 @@ class Trainer:
             get_not_nans=True,
         )
 
+        # String attributes
+        self.device = device
+        self.data_path = data_path
+        self.model_path = model_path
+
+        # Int attributes
+        self.early_stopping_start = early_stopping_start
         self.image_size = image_size
         self.batch_size = batch_size
-        self.lr = lr
-        self.epochs = epochs
-        self.early_stopping_start = early_stopping_start
         self.patience = patience
-
-        # bool
+        self.epochs = epochs
+        self.lr = lr
+        
+        # Bool attributes
         self.load_and_train = load_and_train
         self.early_stopping = early_stopping
         self.mixed_precision = mixed_precision
 
-        # non-parameters
+        # Local attributes
         self.history = None
         self.history_hd95 = None
 
@@ -187,13 +197,13 @@ class Trainer:
         train_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/train",
-            mask_path="masks/train",
+            mask_path="labels/train",
             image_size=self.image_size)
 
         val_dataset = CustomDataset(
             root_path=data_path,
             image_path="images/test",
-            mask_path="masks/test",
+            mask_path="labels/test",
             image_size=self.image_size)
 
         train_dataloader = DataLoader(dataset=train_dataset,
@@ -219,11 +229,11 @@ class Trainer:
             data_path=self.data_path)
 
         # Model training config
-        trainable_param = (
+        trainable_param = [
             param
             for name, param in self.model.named_parameters()
             if not name.startswith("encoder.")
-        )
+        ]
 
         optimizer = optim.AdamW(trainable_param, lr=self.lr)
 
@@ -244,8 +254,8 @@ class Trainer:
         self.create_dir(model_dir)
 
         # Copy model file to destination
-        copy("YOLOSegPlusPlus.py",
-             os.path.join(dest_dir, "YOLOSegPlusPlus.py"))
+        copy("YOLOSegmantic.py",
+             os.path.join(dest_dir, "YOLOSegmantic.py"))
 
         # Add seed for reproducibility
         seed = 42
@@ -271,103 +281,46 @@ class Trainer:
             train_start_time = time.time()
             train_running_loss = 0
 
-            if self.mixed_precision:
-                for idx, img_mask in enumerate(tqdm(train_dataloader)):
-                    img = img_mask[0].float().to(self.device)
-                    mask = img_mask[1].float().to(self.device)
-                    optimizer.zero_grad()
-                    with torch.amp.autocast(device_type=self.device):
-                        pred = self.model(img)
-                        loss = self.loss(pred, mask)
+            autocast_ctx = (
+                torch.amp.autocast(device_type=self.device)
+                if self.mixed_precision
+                else contextlib.nullcontext()
+            )
+            for idx, img_mask in enumerate(tqdm(train_dataloader)):
+                img = img_mask[0].float().to(self.device)
+                mask = img_mask[1].float().to(self.device)
 
-                        # ---DEEP SURPERVISION---
-#                         pred, aux = self.model(img, return_aux=True)
-#                         main_loss = self.loss(pred, mask)
-#
-#                         aux_loss = 0
-#                         for i, aux_out in enumerate(aux):
-#                             # Downsample target to match auxiliary output resolution
-#                             masks_downsampled = nn.functional.interpolate(
-#                                 mask,
-#                                 size=aux_out.shape[-2:],
-#                                 mode='nearest'
-#                             )
-#                             aux_loss += self.loss(
-#                                 aux_out, masks_downsampled) * aux_weights[i]
-#
-#                         loss = main_loss + aux_loss
-                        # ---DEEP SURPERVISION---
-
-                    if torch.isnan(loss):
-                        print("NaN loss detected!")
-                        print("Pred min/max:", pred.min().item(),
-                              pred.max().item())
-                        print("Mask min/max:", mask.min().item(),
-                              mask.max().item())
-                        break
-
-                    scaler.scale(loss).backward()
-
-                    # Unscales the gradients of optimizer's assigned params in-place
-                    scaler.unscale_(optimizer)
-
-                    # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
-                    torch.nn.utils.clip_grad_norm_(
-                        trainable_param, max_norm=1.0)
-
-                    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
-                    #   although it still skips optimizer.step() if the gradients contain infs or NaNs.
-                    scaler.step(optimizer)
-
-                    # Updates the scale for next iteration.
-                    scaler.update()
-
-                    # Accumulate loss and metrics
-                    train_running_loss += loss.item()
-
-                    # Update metrics
-                    pred_sigmoid = torch.nn.functional.sigmoid(pred)
-                    pred_binary = (pred_sigmoid > 0.5).float()
-                    self.dice_metric(pred_binary, mask)
-
-            else:
-                for idx, img_mask in enumerate(tqdm(train_dataloader)):
-                    img = img_mask[0].float().to(self.device)
-                    mask = img_mask[1].float().to(self.device)
-
-                    optimizer.zero_grad()
+                optimizer.zero_grad()
+                with autocast_ctx:
                     pred = self.model(img)
                     loss = self.loss(pred, mask)
 
-                    # ---DEEP SURPERVISION---
-#                     pred, aux = self.model(img, return_aux=True)
-#                     main_loss = self.loss(pred, mask)
-#
-#                     aux_loss = 0
-#                     for i, aux_out in enumerate(aux):
-#                         # Downsample target to match auxiliary output resolution
-#                         masks_downsampled = nn.functional.interpolate(
-#                             mask,
-#                             size=aux_out.shape[-2:],
-#                             mode='nearest'
-#                         )
-#                         aux_loss += self.loss(
-#                             aux_out, masks_downsampled) * aux_weights[i]
-#
-#                     loss = main_loss + aux_loss
-                    # ---DEEP SURPERVISION---
+                if torch.isnan(loss):
+                    print("NaN loss detected!")
+                    print("Pred min/max:", pred.min().item(), pred.max().item())
+                    print("Mask min/max:", mask.min().item(), mask.max().item())
+                    break
 
-                    train_running_loss += loss.item()
+                if self.mixed_precision:
+                    scaler.scale(loss).backward()
+                    # Unscales the gradients of optimizer's assigned params in-place
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(trainable_param, max_norm=1.0)
+                    # Optimizer's gradients are already unscaled, so scaler.step does not unscale them,
+                    #   although it still skips optimizer.step() if the gradients contain infs or NaNs.
+                    scaler.step(optimizer)
+                    # Updates the scale for next iteration.
+                    scaler.update()
+                else:
                     loss.backward()
-
-                    torch.nn.utils.clip_grad_norm_(
-                        trainable_param, max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(trainable_param, max_norm=1.0)
                     optimizer.step()
 
-                    # Update metrics
-                    pred_sigmoid = torch.nn.functional.sigmoid(pred)
-                    pred_binary = (pred_sigmoid > 0.5).float()
-                    self.dice_metric(pred_binary, mask)
+                # Accumulate loss and metrics
+                train_running_loss += loss.item()
+                pred_sigmoid = torch.nn.functional.sigmoid(pred)
+                pred_binary = (pred_sigmoid > 0.5).float()
+                self.dice_metric(pred_binary, mask)
 
             train_end_time = time.time()
             train_loss = train_running_loss / (idx + 1)
@@ -477,10 +430,8 @@ class Trainer:
             print("-"*30)
             print(f"This is Best Val Dice Score:  {best_val_dice_metric}")
             print(f"This is Patience {patience}")
-            print(f"Training Speed per EPOCH (in seconds): {
-                  train_end_time - train_start_time:.4f}")
-            print(f"Validation Speed per EPOCH (in seconds): {
-                  val_end_time - val_start_time:.4f}")
+            print(f"Training Speed per EPOCH (in seconds): {train_end_time - train_start_time:.4f}")
+            print(f"Validation Speed per EPOCH (in seconds): {val_end_time - val_start_time:.4f}")
 
             print(f"Maximum Gigabytes of VRAM Used: {
                   torch.cuda.max_memory_reserved(self.device) * 1e-9:.4f}")
@@ -560,7 +511,7 @@ def modify_YOLO(model):
     # Note: YOLO's Conv sets bias=False, so we skip transferring it.
 
     # 6. Create the new 4-channel nn.Conv2d layer
-    new_nn_conv = nn.Conv2d(
+    new_nn_conv = torch.nn.Conv2d(
         in_channels=4,  # Change from 3 to 4
         out_channels=out_channels,
         kernel_size=kernel_size,
@@ -602,23 +553,17 @@ def modify_YOLO(model):
 
 if __name__ == "__main__":
     # Create trainer and predictor instances
-    p_args = dict(model="pretrained_detect_yolo/yolo12n_det_aug/weights/best.pt",
+    p_args = dict(model="pretrained_yolo/best_0.pt",
                   data="data/data.yaml",
                   verbose=True,
                   imgsz=160,
                   save=False)
 
-    # p_args = dict(model="pretrained_detect_yolo/yolo12n_det_coco/weights/best.pt",
-    #               data="data/data.yaml",
-    #               verbose=True,
-    #               imgsz=160,
-    #               save=False)
-
     # Create predictor and Load checkpoint
     YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
     YOLO_trainer.setup_model()
 
-    # Create YOLOSeg++ Instance
+    # Create YOLOSegmantic Instance
     model = YOLOSegmantic(predictor=YOLO_trainer)
 
     trainable_count = count_parameters(model, only_trainable=True)

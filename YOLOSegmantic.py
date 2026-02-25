@@ -250,7 +250,7 @@ class YOLOSegmantic(Module):
             scale_factor=2, mode="nearest")
         self.decoder = nn.ModuleList([
             Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128+1, 64, n=2),
+                C3Ghost(128, 64, n=2),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
@@ -258,19 +258,19 @@ class YOLOSegmantic(Module):
                 DoubleResDSConv(64, 64),
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64+64, 32, n=1),
+                C3Ghost(64, 32, n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.nearest,
                 ResDWCOnv
-            (32+32, 16),
+            (32, 16),
 
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
                 self.bilinear,
                 ResDWCOnv
-            (16+16, 8),
+            (16, 8),
             ),
         ])
         self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)

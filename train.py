@@ -1,5 +1,6 @@
 # Local
 from custom_yolo_trainer.custom_trainer import CustomSegmentationTrainer
+from tools.count_parameters import print_trainable_parameters
 from YOLOSegmantic import YOLOSegmantic
 from dataset import CustomDataset
 
@@ -18,7 +19,7 @@ import pandas as pd
 import numpy as np
 
 # Internal Libs
-from typing import Tuple, List, Union
+from typing import Tuple, List
 from shutil import copy
 from itertools import cycle
 import contextlib
@@ -270,9 +271,6 @@ class Trainer:
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
 
-        """INTEGRATE LATER"""
-        aux_weights = [0.1, 0.2]
-
         patience = 0  # --> local patience for early stopping
         for epoch in tqdm(range(self.epochs)):
             # self.model.train()
@@ -339,24 +337,6 @@ class Trainer:
 
                     pred = self.model(img)
                     loss = self.loss(pred, mask)
-
-                    # ---DEEP SURPERVISION---
-#                     pred, aux = self.model(img, return_aux=True)
-#                     main_loss = self.loss(pred, mask)
-#
-#                     aux_loss = 0
-#                     for i, aux_out in enumerate(aux):
-#                         # Downsample target to match auxiliary output resolution
-#                         masks_downsampled = nn.functional.interpolate(
-#                             mask,
-#                             size=aux_out.shape[-2:],
-#                             mode='nearest'
-#                         )
-#                         aux_loss += self.loss(
-#                             aux_out, masks_downsampled) * aux_weights[i]
-#
-#                     loss = main_loss + aux_loss
-                    # ---DEEP SURPERVISION---
 
                     # Accumulate Loss and Metrics
                     val_running_loss += loss.item()
@@ -463,96 +443,9 @@ class Trainer:
         self.plot_loss_curves(save_path=dest_dir,
                               history=self.history_hd95, filename="plot_hd95.png")
 
-
-def count_parameters(model: torch.nn.Module, only_trainable: bool = True) -> Union[int, List[int]]:
-    """
-    Counts the total number of parameters in a PyTorch model.
-
-    Args:
-        model (nn.Module): The PyTorch model instance (e.g., a loaded model or a custom nn.Module).
-        only_trainable (bool): If True, counts only parameters that require gradients (trainable).
-                               If False, returns a list: [trainable_params, total_params].
-
-    Returns:
-        Union[int, List[int]]: The total count of parameters (or a list if only_trainable is False).
-    """
-
-    # Generator expression to count trainable parameters
-    trainable_params = sum(p.numel()
-                           for p in model.parameters() if p.requires_grad)
-
-    if only_trainable:
-        return trainable_params
-    else:
-        # Generator expression to count ALL parameters (trainable + fixed)
-        all_params = sum(p.numel() for p in model.parameters())
-        return [trainable_params, all_params]
-
-
-def modify_YOLO(model):
-    old_conv_module = model.model.model.model[0]
-    print(old_conv_module)
-
-    # 3. Get the inner nn.Conv2d layer and its weights
-    old_nn_conv = old_conv_module.conv
-    old_conv_weights = old_nn_conv.weight.data
-
-    # --- Setup for the new Conv module ---
-
-    # 5. Determine the new nn.Conv2d layer parameters
-    # c2 (output channels) comes from the old nn.Conv2d layer
-    out_channels = old_nn_conv.out_channels
-    # Other parameters from the old nn.Conv2d layer
-    kernel_size = old_nn_conv.kernel_size
-    stride = old_nn_conv.stride
-    padding = old_nn_conv.padding
-    dilation = old_nn_conv.dilation
-    groups = old_nn_conv.groups
-    # Note: YOLO's Conv sets bias=False, so we skip transferring it.
-
-    # 6. Create the new 4-channel nn.Conv2d layer
-    new_nn_conv = torch.nn.Conv2d(
-        in_channels=4,  # Change from 3 to 4
-        out_channels=out_channels,
-        kernel_size=kernel_size,
-        stride=stride,
-        padding=padding,
-        dilation=dilation,
-        groups=groups,
-        bias=False  # Must match the original YOLO structure
-    )
-
-    # 7. Initialize the new Conv weights tensor
-    # Shape: [out_channels, in_channels (4), kernel_height, kernel_width]
-    new_conv_weights = new_nn_conv.weight.data
-
-    # 8. Transfer the original 3-channel weights (RGB)
-    new_conv_weights[:, 0:3, :, :] = old_conv_weights[:, 0:3, :, :]
-
-    # 9. Calculate and set the average for the 4th channel
-    # Calculate the mean across the input channel dimension (dim=1) of the old weights
-    avg_weights = old_conv_weights.mean(dim=1, keepdim=True)
-    # Copy the averaged 3-channel weights to the 4th channel (index 3)
-    new_conv_weights[:, 3:4, :, :] = avg_weights
-
-    # 10. Reconstruct the entire Conv module (and keep the original BN and ACT)
-    # We can't easily instantiate the original 'Conv' class without the source file
-    # and 'autopad' function, so we modify the existing module's components.
-
-    # Set the new nn.Conv2d layer into the existing Conv module
-    old_conv_module.conv = new_nn_conv
-
-    # The BN and ACT layers remain unchanged, which is correct because they operate
-    # on the 'out_channels', which hasn't changed (it's still 16 in your example).
-    # You must ensure the BN's num_features matches the Conv's out_channels.
-
-    print("u2705 Model's first 'Conv' module successfully modified.")
-    print(f"   - New input channels: 4")
-    print(f"   - Original output channels: {out_channels}")
-
-
 if __name__ == "__main__":
     # Create trainer and predictor instances
+    # TODO CREATE A CONFIG FILE FOR THIS
     p_args = dict(model="pretrained_yolo/best_0.pt",
                   data="data/data.yaml",
                   verbose=True,
@@ -565,14 +458,9 @@ if __name__ == "__main__":
 
     # Create YOLOSegmantic Instance
     model = YOLOSegmantic(predictor=YOLO_trainer)
+    print_trainable_parameters(model)
 
-    trainable_count = count_parameters(model, only_trainable=True)
-    all_counts = count_parameters(model, only_trainable=False)
-
-    print(f"Total Trainable Parameters: {trainable_count:,}")
-    print(f"Total All Parameters (Trainable + Fixed): {all_counts[1]:,}")
-    print("-" * 30)
-
+    # TODO CREATE A CONFIG FILE FOR THIS
     trainer = Trainer(model=model,
                       data_path="data/stacked_segmentation_0",
                       model_path=None,

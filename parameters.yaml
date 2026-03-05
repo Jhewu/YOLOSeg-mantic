@@ -1,15 +1,12 @@
-# TODO: NEEDS REWORK
-
 yolo: 
   weights: "pretrained_yolo/best_0.pt" # UPDATE 
-  data_dir: "data/data.yaml"
+  data_dir: "data/data.yaml"           # UPDATE
   verbose: true
   image_size: 160
   save: false
 
 model: 
-  # TODO: Update for YOLOSegmantic
-  refinement: "simple"    # "simple" or "basic"
+  refinement: "simple" # "simple" or "basic"
   verbose: false 
   layers: 
     - [128, 64, 2] # C3Ghost 
@@ -20,15 +17,10 @@ model:
     - [8, 1]       # Output Conv
   num_classes: 1
 
-
-
-  encoder_skip_idx: {0, 1, 2, 4}  # <- Including ALL layers
-  decoder_skip_idx: {2, 3, 4}
-
 dataloader: 
 
   # Dataset Parameters
-  root_path: "3_fold_dataset/stacked_segmentation_0"
+  root_path:  "data/stacked_segmentation_0" # UPDATE "3_fold_dataset/stacked_segmentation_0"
   image_dir: "images"
   mask_dir: "labels"
   image_size: 160
@@ -36,7 +28,7 @@ dataloader:
   subsample: 1.0
   
   # DataLoader Parameters
-  batch_size: 128
+  batch_size: 16 # UPDATE 128
   num_workers: 10
   use_shuffle: false
   use_persistent_workers: false
@@ -45,7 +37,7 @@ dataloader:
 trainer: 
   training:    
     # General                           
-    epochs: 75
+    epochs: 1 # UPDATE 75
     use_mix_precision: true
 
     is_load_and_train: false

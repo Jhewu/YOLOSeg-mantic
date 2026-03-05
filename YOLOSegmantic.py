@@ -304,7 +304,7 @@ class YOLOSegmantic(Module):
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
         (Inference ONLY) Inference step for YOLOSegmantic
-        Run YOLO Detect forward, and YOLOSeg++ Segmentator Head sequentially
+        Run YOLO Detect forward, and YOLOSegmantic Segmentator Head sequentially
 
         Args:
             x (torch.tensor): Input tensor [B, 4, H, W]

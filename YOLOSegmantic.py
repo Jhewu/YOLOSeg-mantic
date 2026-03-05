@@ -201,7 +201,7 @@ class ECA(Module):
 class YOLOSegmantic(Module):
     def __init__(self,
                  predictor: CustomSegmentationTrainer,
-                 refinement: str = "",
+                 refinement: str = "simple",
                  verbose: bool = False):
         """
         Creates a YOLOSegmantic Network with Pretrained YOLOv12 (detection) model

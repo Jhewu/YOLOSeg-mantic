@@ -1,0 +1,14 @@
+#For the data format, please refer to https://docs.ultralytics.com/datasets/segment/coco
+
+# dataset root directory
+path: /home/jun/Desktop/inspirit/YOLOSegmantic/3_fold_dataset/stacked_detection_1
+
+# train images relative ('relative to path')
+train: images/train
+val: images/test
+
+channels: 4
+
+# Classes
+nc: 1
+names: ["whole_tumor"]

@@ -1,6 +1,6 @@
 yolo: 
-  weights: "pretrained_yolo/best_0.pt"       # UPDATE 
-  data_dir: "3_fold_run/data.yaml"           # UPDATE
+  weights: "pretrained_yolo/best_2.pt"         # UPDATE 
+  data_dir: "k_fold_params/data_2.yaml"           # UPDATE
   verbose: true
   image_size: 160
   save: false
@@ -19,7 +19,7 @@ model:
 
 dataloader: 
   # Dataset Parameters
-  root_path:  "3_fold_dataset/stacked_detection_0" # UPDATE 
+  root_path:  "3_fold_dataset/stacked_detection_2" # UPDATE 
   image_dir: "images"
   mask_dir: "labels"
   image_size: 160

@@ -1,6 +1,6 @@
 yolo: 
-  weights: "pretrained_yolo/best_0.pt"       # UPDATE 
-  data_dir: "3_fold_run/data.yaml"           # UPDATE
+  weights: "pretrained_yolo/best_0.pt"         # UPDATE 
+  data_dir: "k_fold_params/data_0.yaml"           # UPDATE
   verbose: true
   image_size: 160
   save: false

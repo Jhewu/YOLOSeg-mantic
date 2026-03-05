@@ -7,4 +7,4 @@ archive/
 data/stacked_segmentation*
 3_fold_dataset/
 pretrained_yolo/*
-checkpoints/*
+runs/*

@@ -1,38 +1,87 @@
-# Internal Libs
-from typing import Tuple
-import random
+# Internal
 import os
+import random
+from typing import Tuple
 
-# External Libs
-import torch
+# External
 import cv2
+
+import torch
+from torch.utils.data import Dataset, DataLoader
+
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
-from torch.utils.data.dataset import Dataset
 
+# Local 
+from base import BaseDataLoader, BaseDataset
 
-class CustomDataset(Dataset):
+class SegmentationDataLoader(BaseDataLoader):
+    def __init__(
+        self,
+        # Dataset Parameters
+        root_path:   str,
+        image_dir:   str,
+        mask_dir:    str,
+        image_size:  int,
+        augmentation: bool = True,
+        subsample:   float = 1.0,
+
+        # DataLoader Parameters
+        batch_size:  int   = 128,
+        num_workers: int   = 10,
+        shuffle:     bool = False,
+        persistent_workers: bool = True, 
+        pin_memory: bool = True, 
+    ):
+        
+        self.train_dataset = SegmentationDataset(
+                            root_path = root_path, 
+                            image_path = f"{image_dir}/train",  
+                            mask_path = f"{mask_dir}/train",
+                            image_size = image_size, 
+                            augmentation = augmentation, 
+                            subsample = subsample)
+                            
+        self.val_dataset = SegmentationDataset(
+                            root_path = root_path, 
+                            image_path = f"{image_dir}/test", 
+                            mask_path = f"{mask_dir}/test", 
+                            image_size = image_size, 
+                            augmentation = augmentation, 
+                            subsample = subsample)
+
+        self._batch_size  = batch_size
+        self._num_workers = num_workers
+        self._shuffle = shuffle
+        self._persistent_workers = persistent_workers
+        self._pin_memory = pin_memory
+
+    def get_dataloader(self, split: str) -> DataLoader:
+        train_dataloader = DataLoader(dataset=self.train_dataset,
+                                    batch_size=self._batch_size,
+                                    shuffle=self._shuffle, 
+                                    num_workers=self._num_workers, 
+                                    persistent_workers=self._persistent_workers,
+                                    pin_memory=self._pin_memory)
+                                    
+        val_dataloader = DataLoader(dataset=self.val_dataset,
+                                    batch_size=self._batch_size,
+                                    shuffle=self._shuffle, 
+                                    num_workers=self._num_workers, 
+                                    persistent_workers=self._persistent_workers,
+                                    pin_memory=self._pin_memory) # <- do not shuffle
+
+        return train_dataloader, val_dataloader
+
+class SegmentationDataset(BaseDataset):
     def __init__(self,
                  root_path: str,
                  image_path: str,
                  mask_path: str,
                  image_size: int = 160,
                  augmentation: bool = True,
-                 seed: int = 42,
                  subsample: float = 1.0):
-        """
-        YOLOSegmantic Cutom Dataset with Basic Augmentation
-
-        Args:
-            root_path (str): Root directory containing images and masks.
-            image_path (str): Subdirectory for images (relative to root_path).
-            mask_path (str): Subdirectory for masks (relative to root_path).
-            image_size (int, optional): Size to which images and masks will be resized. Defaults to 160.
-            augmentation (bool, optional): Whether to apply data augmentation. Defaults to True.
-            seed (int, optional): Random seed for reproducibility. Defaults to 42.
-            subsample (float, optional): Fraction of the dataset to use (for quick testing). Defaults to 1.0.
-        """
 
         # Paths
         self.root_path = root_path

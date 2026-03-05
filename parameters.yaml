@@ -9,9 +9,21 @@ yolo:
 
 model: 
   # TODO: Update for YOLOSegmantic
-  name: "unet"  # unet, tiny_unet, unext
-  in_channels: 4
-  out_channels: 1
+  refinement: "simple"    # "simple" or "basic"
+  verbose: false 
+  layers: 
+    - [128, 64, 2] # C3Ghost 
+    - [64, 64]     # DoubleResDSConv
+    - [64, 32, 1]  # C3Ghost
+    - [32, 16]     # ResDWConv
+    - [16, 8]      # ResDWConv
+    - [8, 1]       # Output Conv
+  num_classes: 1
+
+
+
+  encoder_skip_idx: {0, 1, 2, 4}  # <- Including ALL layers
+  decoder_skip_idx: {2, 3, 4}
 
 dataloader: 
 

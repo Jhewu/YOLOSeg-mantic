@@ -50,20 +50,21 @@ if __name__ == "__main__":
     with open(f"{PARAM_DIR}", "r") as f:
         params = yaml.safe_load(f)
 
+    # Create predictor and load checkpoint
     yolo_cfg = params['yolo']
     p_args = dict(model=yolo_cfg['weights'],
                 data=yolo_cfg['data_dir'],
                 verbose=yolo_cfg['verbose'],
                 imgsz=yolo_cfg['image_size'],
                 save=yolo_cfg['save'])     
-                  
-    # Create predictor and load checkpoint
     YOLO_trainer = CustomSegmentationTrainer(overrides=p_args)
     YOLO_trainer.setup_model()
 
     # Create YOLOSegmantic instance
     # TODO CREATE A CONFIG FILE FOR THIS
-    model = YOLOSegmantic(predictor=YOLO_trainer)
+    model_cfg = params['model']
+    model = YOLOSegmantic(predictor=YOLO_trainer, 
+                          config=model_cfg)
     print_trainable_parameters(model)
 
     metrics = SegmentationMetrics()

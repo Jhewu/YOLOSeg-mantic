@@ -201,8 +201,7 @@ class ECA(Module):
 class YOLOSegmantic(Module):
     def __init__(self,
                  predictor: CustomSegmentationTrainer,
-                 refinement: str = "simple",
-                 verbose: bool = False):
+                 config: dict):
         """
         Creates a YOLOSegmantic Network with Pretrained YOLOv12 (detection) model
 
@@ -235,59 +234,66 @@ class YOLOSegmantic(Module):
         """
 
         super().__init__()
+        # ---Config Unpacking--- #
+
+        self._refinement = config.get("refinement", "simple")
+        self._verbose    = config.get("verbose", False)
+        self._layers     = config.get("channels", [
+                                            [128, 64, 2],
+                                            [64, 64],
+                                            [64, 32, 1],
+                                            [32, 16],
+                                            [16, 8], 
+                                            [8, 1]
+                                        ])
+        self.num_classes = config.get("num_classes", 1)
+
         # ---YOLO predictor and backbone--- #
         self.yolo = predictor.model
         for param in self.yolo.parameters():  # <- Frozen
             param.requires_grad = False
         self.yolo.eval()
         self.encoder = self.yolo.model[:5]
-        # ---YOLO predictor and backbone--- #
 
         # ---Decoder Body--- #
         self.bilinear = Upsample(
             scale_factor=2, mode="bilinear", align_corners=False)
         self.nearest = Upsample(
             scale_factor=2, mode="nearest")
+        
         self.decoder = nn.ModuleList([
-            Sequential(  # <- Mixing (128 Skip) + (1 Logits)
-                C3Ghost(128, 64, n=2),
+            Sequential(  # <- Mixing (128 Skip) + 
+                C3Ghost(self._layers[0][0], self._layers[0][1], n=self._layers[0][2]),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 20x20 -> 40x40
                 self.nearest,
-                DoubleResDSConv(64, 64),
+                DoubleResDSConv(self._layers[1][0], self._layers[1][1]),
             ),
             Sequential(  # <- Mixing (64 Input) + (64 Skip)
-                C3Ghost(64, 32, n=1),
+                C3Ghost(self._layers[2][0], self._layers[2][1], n=1),
                 ECA(),
             ),
             Sequential(  # <- Assume Upsample Here 40x40 -> 80x80
                 self.nearest,
-                ResDWCOnv
-            (32, 16),
+                ResDWCOnv(self._layers[3][0], self._layers[3][1]),
 
             ),
             Sequential(  # <- Assume Upsample Here 80x80 -> 160x160
                 self.bilinear,
-                ResDWCOnv
-            (16, 8),
+                ResDWCOnv(self._layers[4][0], self._layers[4][1]),
             ),
         ])
-        self.output = nn.Conv2d(in_channels=8, out_channels=1, kernel_size=1)
+        self.output = nn.Conv2d(in_channels=self._layers[5][0], out_channels=self._layers[5][1], kernel_size=self.num_classes)
         # ---Decoder Body--- #
 
         # --- Boundary Refinement Section --- #
-        if refinement == "simple":
+        if self._refinement == "simple":
             self.boundary_refine = BoundaryRefinementModule(8, simple=True)
-        elif refinement == "basic":
+        elif self._refinement == "basic":
             self.boundary_refine = BoundaryRefinementModule(8, simple=False)
         else:
             self.boundary_refine = None
-        # --- Boundary Refinement Section --- #
-
-        # --- Miscellaneous Section --- #
-        self.verbose = verbose
-        # --- Miscellaneous Section --- #
 
         # --- Indices --- #
         self.upsample_idx = {2, 5, 6}

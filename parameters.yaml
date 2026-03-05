@@ -1,5 +1,12 @@
 # TODO: NEEDS REWORK
 
+yolo: 
+  weights: "pretrained_yolo/best_0.pt" # UPDATE 
+  data_dir: "data/data.yaml"
+  verbose: true
+  image_size: 160
+  save: false
+
 model: 
   # TODO: Update for YOLOSegmantic
   name: "unet"  # unet, tiny_unet, unext

@@ -19,7 +19,7 @@ model:
 
 dataloader: 
   # Dataset Parameters
-  root_path:  "3_fold_dataset/stacked_detection_1" # UPDATE 
+  root_path:  "3_fold_dataset/stacked_segmentation_1" # UPDATE 
   image_dir: "images"
   mask_dir: "labels"
   image_size: 160

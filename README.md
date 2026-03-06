@@ -26,4 +26,5 @@ Clinical tomograms present image-level imbalance with a high-level of negative s
 
 ## Remaining ToDo
 
-1. 
+1. Reformat Trainer Class to not include the Metrics and Losses hard-coded. 
+2. Reformat YOLOSegmantic Class to allow Architectural Change from Hyperparameter

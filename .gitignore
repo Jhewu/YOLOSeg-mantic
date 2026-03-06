@@ -1,14 +1,10 @@
-runs/*
+# Temporal
+.vscode/
 __pycache__/
-yolo_checkpoint/*
+
+# Permanent
 archive/
-prev*/
-archive_runs/
-trained*/
-old_checkpoint/*
-new_yolo_checkpoint/
-ablation_study/*
-data/stacked_segmentation/*
-previous_ablation_study/ 
-pretrained_detect_yolo/*
-current/*
+data/stacked_segmentation*
+3_fold_dataset/
+pretrained_yolo/*
+runs/*

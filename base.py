@@ -125,6 +125,9 @@ class BaseTrainer:
         self.metrics = metrics
         self.dataloader = dataloader
 
+        self.batch_size = self.dataloader._batch_size
+        self.image_size = self.dataloader._image_size
+
         # ── sub-dicts with safe fallbacks ─────
         t_cfg  = params.get("training",  {})
         o_cfg  = params.get("optimizer", {})

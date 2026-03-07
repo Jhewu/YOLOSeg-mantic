@@ -37,6 +37,7 @@ class SegmentationTrainer(BaseTrainer):
             if len(nms_out) == 0: 
                 preds_binary = torch.zeros(1, 1, self.image_size, self.image_size).to(self.device)
             else: 
+                # TODO: To Remove Later
                 conf = nms_out[0][4]
                 if conf <= conf_thres: 
                     preds_binary = torch.zeros(1, 1, self.image_size, self.image_size).to(self.device)

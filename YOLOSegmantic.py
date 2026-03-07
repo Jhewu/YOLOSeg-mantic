@@ -300,6 +300,12 @@ class YOLOSegmantic(Module):
         self.encoder_skip_idx = {0, 1, 2, 4}  # <- Including ALL layers
         self.decoder_skip_idx = {2, 3, 4}
         # --- Indices --- #
+    
+    def detector_forward(self, x: torch.tensor) -> torch.tensor: 
+        with torch.no_grad():
+            x, features, logits = self.yolo.predict(
+                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
+        return x, features, logits
 
     def inference(self, x: torch.tensor) -> torch.tensor:
         """
@@ -329,9 +335,14 @@ class YOLOSegmantic(Module):
             x (torch.tensor): Output tensor [B, 1, H, W]
         """
         # --- YOLO detect forward --- #
-        with torch.no_grad():
-            x, features, logits = self.yolo.predict(
-                x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
+        
+        ### COMMENTED FOR NOW ###
+        # with torch.no_grad():
+        #     x, features, logits = self.yolo.predict(
+        #         x, return_features=True, seg_features_idxs=self.encoder_skip_idx)
+        ### COMMENTED FOR NOW ###
+
+        x, features, logits = self.detector_forward(x)
         # --- YOLO detect forward --- #
 
         i = -1  # <- Start from last index

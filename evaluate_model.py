@@ -1,34 +1,18 @@
-from YOLOSegmantic import YOLOSegmantic
-from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
-from dataset import CustomDataset
-
-import os
+# Internal
 import time
 from typing import Tuple, List, Union
-from itertools import cycle
-from tools.nms import non_max_suppression
 
-import torch
-from torch.amp import GradScaler
-from torch import optim
-from torch.utils.data import DataLoader
-
-from torchinfo import summary
-from tqdm import tqdm
-import pandas as pd
-import matplotlib.pyplot as plt
-from monai.losses import DiceLoss
-from monai.metrics import DiceMetric, HausdorffDistanceMetric
-
-import cv2
-from torchvision import transforms  
-import matplotlib.pyplot as plt
-from torchvision.transforms import GaussianBlur  
-import torchvision
+# External 
 import torch
 from torch import nn
+from tqdm import tqdm
+from monai.metrics import DiceMetric, HausdorffDistanceMetric
 
-import torch.nn.functional as F
+# Local
+from YOLOSegmantic import YOLOSegmantic
+from dataset import SegmentationDataLoader
+from tools.nms import non_max_suppression
+from custom_yolo_predictor.custom_detseg_predictor import CustomSegmentationPredictor
 
 class Evaluator: 
     def __init__(self,
@@ -158,7 +142,7 @@ class Evaluator:
                 # logits = objectmap_tensor
 
                 ### Calculate the confidence    
-                out = non_max_suppression(detect_branch)[0]
+                out = non_max_suppression(detect_branch, conf_thres=conf)[0]
 
                 if len(out) == 0: 
                     pred_binary = torch.zeros(1, 1, self.image_size, self.image_size).to(self.device)

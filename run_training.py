@@ -61,7 +61,6 @@ if __name__ == "__main__":
     YOLO_trainer.setup_model()
 
     # Create YOLOSegmantic instance
-    # TODO CREATE A CONFIG FILE FOR THIS
     model_cfg = params['model']
     model = YOLOSegmantic(predictor=YOLO_trainer, 
                           config=model_cfg)

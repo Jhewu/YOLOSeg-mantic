@@ -25,7 +25,7 @@ class SegmentationTrainer(BaseTrainer):
         
         """
         if use_conf_thres and self.batch_size == 1: 
-            preds, yolo_out = self.model.forward(x, return_yolo_out=True)
+            preds, yolo_out = self.model.forward(inputs, return_yolo_out=True)
             pred_sigmoid = torch.nn.functional.sigmoid(preds)
             preds_binary = (pred_sigmoid > 0.5).float()  
             loss = self.loss_fn(preds, targets)

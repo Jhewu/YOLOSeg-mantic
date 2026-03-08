@@ -25,7 +25,7 @@ class SegmentationTrainer(BaseTrainer):
         
         """
         if use_conf_thres and self.batch_size == 1: 
-            preds, yolo_out = self.model.forward(inputs, return_yolo_out=True)
+            preds, yolo_out = self.model.forward(inputs, return_yolo_out=use_conf_thres)
             pred_sigmoid = torch.nn.functional.sigmoid(preds)
             preds_binary = (pred_sigmoid > 0.5).float()  
             loss = self.loss_fn(preds, targets)
@@ -33,16 +33,8 @@ class SegmentationTrainer(BaseTrainer):
             detect_branch, cls_branch = yolo_out
 
             nms_out = non_max_suppression(detect_branch, conf_thres=conf_thres)[0]
-
             if len(nms_out) == 0: 
                 preds_binary = torch.zeros(1, 1, self.image_size, self.image_size).to(self.device)
-            else: 
-                # TODO: To Remove Later
-                conf = nms_out[0][4]
-                if conf <= conf_thres: 
-                    preds_binary = torch.zeros(1, 1, self.image_size, self.image_size).to(self.device)
-                    if self.verbose: 
-                        print("confidence is less than the threshold and still passed")
 
             return preds_binary, loss
         else: 

@@ -39,6 +39,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=des.lstrip(" "), formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("-p", "--param_dir", type=str, help='directory of YAML training parameter configuration file\t[parameters.yaml]')
+    parser.add_argument("-d", "--dataset_dir", type=str, help='root directory of dataset\t[]')
     parser.add_argument("-w", "--weight_dir", type=str, help='directory of pretrained weights\t[runs/segmantic_0/best.pt]')
     parser.add_argument("-c", "--conf", type=float, help='confidence threshold for YOLO detector\t[0.25]')
     args = parser.parse_args()
@@ -64,6 +65,10 @@ if __name__ == "__main__":
     # Set configuration to load pretrained model weights
     params['trainer']['training']['use_load_and_train'] = True
     params['trainer']['training']['load_and_train_path'] = WEIGHT_DIR
+
+    if args.dataset_dir is not None: 
+        # TODO: Make declaration consistent
+            params['dataloader']['root_path'] = args.dataset_dir
 
     # Create predictor and load checkpoint
     yolo_cfg = params['yolo']

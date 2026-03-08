@@ -62,7 +62,7 @@ if __name__ == "__main__":
         params = yaml.safe_load(f)
     
     # Set configuration to load pretrained model weights
-    params['trainer']['training']['is_load_and_train'] = True
+    params['trainer']['training']['use_load_and_train'] = True
     params['trainer']['training']['load_and_train_path'] = WEIGHT_DIR
 
     # Create predictor and load checkpoint

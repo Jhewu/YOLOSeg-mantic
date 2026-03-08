@@ -199,6 +199,8 @@ class BaseTrainer:
         shutil.copy(param_dir, dest)
     
         if self.is_load_and_train and self.load_and_train_path is not None: 
+            if self.verbose: 
+                print("\n---WEIGHTS ARE LOADED---\n")
             checkpoint = torch.load(self.load_and_train_path, weights_only=True)
             self.model.load_state_dict(checkpoint)
 

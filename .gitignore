@@ -1,6 +1,7 @@
 # Temporal
 .vscode/
 __pycache__/
+commands.txt
 
 # Permanent
 archive/

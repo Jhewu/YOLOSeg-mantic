@@ -125,6 +125,9 @@ class BaseTrainer:
         self.metrics = metrics
         self.dataloader = dataloader
 
+        self.batch_size = self.dataloader._batch_size
+        self.image_size = self.dataloader._image_size
+
         # ── sub-dicts with safe fallbacks ─────
         t_cfg  = params.get("training",  {})
         o_cfg  = params.get("optimizer", {})
@@ -184,10 +187,20 @@ class BaseTrainer:
 
         self.checkpoint_dir = self.build_checkpoint_path()
         self._create_dir(self.checkpoint_dir)
-        shutil.copy(param_dir,
-             os.path.join(self.checkpoint_dir, os.path.basename(param_dir)))
+
+        # Check if it exist, then copy. If it exist, it will rename the file name before copying
+        dest = os.path.join(self.checkpoint_dir, os.path.basename(param_dir))
+        if os.path.exists(dest):
+            base, ext = os.path.splitext(os.path.basename(param_dir))
+            i = 1
+            while os.path.exists(dest):
+                dest = os.path.join(self.checkpoint_dir, f"{base}_{i}{ext}")
+                i += 1
+        shutil.copy(param_dir, dest)
     
         if self.is_load_and_train and self.load_and_train_path is not None: 
+            if self.verbose: 
+                print("\n---WEIGHTS ARE LOADED---\n")
             checkpoint = torch.load(self.load_and_train_path, weights_only=True)
             self.model.load_state_dict(checkpoint)
 

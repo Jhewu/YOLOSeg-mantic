@@ -52,6 +52,7 @@ class SegmentationDataLoader(BaseDataLoader):
                             subsample = subsample)
 
         self._batch_size  = batch_size
+        self._image_size = image_size
         self._num_workers = num_workers
         self._shuffle = shuffle
         self._persistent_workers = persistent_workers
